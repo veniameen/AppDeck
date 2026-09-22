@@ -2,7 +2,7 @@
 // Presentation of the cached limit record. Every view is created once and updated in place, so a
 // fresh answer never rebuilds the window or resets a scroll position.
 Obj usageColor(int remaining){
- switch(deck::usageLevel(remaining)){case deck::UsageLevel::Ok:return color(.43,.80,.58);case deck::UsageLevel::Low:return color(.93,.72,.42);default:return color(.93,.46,.46);}
+ switch(deck::usageLevel(remaining)){case deck::UsageLevel::Ok:return liveColor();case deck::UsageLevel::Low:return warnColor();default:return dangerColor();}
 }
 Obj usageTitleForMinutes(long minutes){
  switch(deck::usageWindow(minutes)){
@@ -84,10 +84,10 @@ void usageHide(Obj v,bool hidden){send<void>(v,"setHidden:",hidden);}
 Obj usageStrip(Obj card,double x,double y,double width,Int tag){
  Obj ref=dict();put(ref,"x",real(x));put(ref,"y",real(y));put(ref,"width",real(width));
  for(int i=0;i<(int)usageShown;++i){Obj col=dict();
-  put(col,"caption",label(card,"",rect(x,y,10,14),9.5,muted(),.25));Obj value=label(card,"",rect(x,y,10,15),11.5,ink(),.25);send<void>(value,"setAlignment:",alignRight);put(col,"value",value);
-  Obj track=panel(card,rect(x,y+19,10,5),color(1,1,1,.08),2.5);put(col,"track",track);put(col,"fill",panel(track,rect(0,0,0,5),ink(),2.5));
-  Obj reset=label(card,"",rect(x,y+28,10,14),10.5,muted());send<void>(reset,"setLineBreakMode:",(Int)4);put(col,"reset",reset);put(ref,i==0?"c0":i==1?"c1":"c2",col);}
- Obj message=label(card,"",rect(x,y+11,width,18),12,muted());send<void>(message,"setLineBreakMode:",(Int)4);put(ref,"message",message);
+  put(col,"caption",label(card,"",rect(x,y,10,13),10,faint(),.3));Obj value=label(card,"",rect(x,y,10,15),12,ink(),.3);send<void>(value,"setFont:",monoFont(12,.3));send<void>(value,"setAlignment:",alignRight);put(col,"value",value);
+  Obj track=panel(card,rect(x,y+19,10,6),color(1,1,1,.08),3);put(col,"track",track);put(col,"fill",panel(track,rect(0,0,0,6),ink(),3));
+  Obj reset=label(card,"",rect(x,y+31,10,14),11,faint(),.1);send<void>(reset,"setLineBreakMode:",(Int)4);put(col,"reset",reset);put(ref,i==0?"c0":i==1?"c1":"c2",col);}
+ Obj message=label(card,"",rect(x,y+11,width,18),12,muted(),.1);send<void>(message,"setLineBreakMode:",(Int)4);put(ref,"message",message);
  Obj hit=styledButton(deckButtonClass,card,"","usageRefresh:",rect(x-8,y-7,width+16,54),tag,"overlay",8);put(ref,"hit",hit);send<void>(hit,"setAccessibilityLabel:",str(T("Refresh account limit","Обновить лимит аккаунта")));
  return ref;
 }
@@ -98,13 +98,13 @@ void usageApplyStrip(Obj ref,Obj p){
  double gap=n>2?18:24,colW=n?(width-gap*(n-1))/n:width;
  for(UInt i=0;i<usageShown;++i){Obj col=get(ref,i==0?"c0":i==1?"c1":"c2");bool on=i<n;for(const char* k:{"caption","value","track","reset"})usageHide(get(col,k),!on);if(!on)continue;
   Obj w=usageWindowAt(p,i);int left=usageRemaining(w);double x0=x+i*(colW+gap);bool rolled=usageResets(w)>0&&usageResets(w)<=nowUnix(),grey=stale||rolled;
-  send<void>(get(col,"caption"),"setFrame:",rect(x0,y,colW*.45,14));send<void>(get(col,"caption"),"setStringValue:",usageTitle(w));
-  send<void>(get(col,"value"),"setFrame:",rect(x0+colW*.4,y-1,colW*.6,15));send<void>(get(col,"value"),"setStringValue:",left<=0?str(T("used up","исчерпан")):n>2?formatInt(T("%ld %% left","ост. %ld %%"),(Int)left):formatInt(T("%ld %% left","осталось %ld %%"),(Int)left));
+  send<void>(get(col,"caption"),"setFrame:",rect(x0,y,colW*.45,13));send<void>(get(col,"caption"),"setStringValue:",usageTitle(w));
+  send<void>(get(col,"value"),"setFrame:",rect(x0+colW*.35,y-1,colW*.65,15));send<void>(get(col,"value"),"setStringValue:",left<=0?str(T("used up","исчерпан")):n>2?formatInt(T("%ld %% left","ост. %ld %%"),(Int)left):formatInt(T("%ld %% left","осталось %ld %%"),(Int)left));
   send<void>(get(col,"value"),"setTextColor:",grey?muted():usageColor(left));
-  send<void>(get(col,"track"),"setFrame:",rect(x0,y+19,colW,5));send<void>(get(col,"fill"),"setFrame:",rect(0,0,colW*deck::usageFill(left),5));
+  send<void>(get(col,"track"),"setFrame:",rect(x0,y+19,colW,6));send<void>(get(col,"fill"),"setFrame:",rect(0,0,colW*deck::usageFill(left),6));
   send<void>(send(get(col,"fill"),"layer"),"setBackgroundColor:",send(grey?muted():usageColor(left),"CGColor"));
   Obj reset=usageResetText(usageResets(w),n>2);send<void>(get(col,"reset"),"setToolTip:",usageResetText(usageResets(w)));if(stale&&i==0&&n<3)reset=cat(cat(reset,str(send<UInt>(reset,"length")?" · ":"")),cat(str(T("data from ","данные ")),usageAgeText(send<double>(get(u,"windowsAt"),"doubleValue"))));
-  send<void>(get(col,"reset"),"setFrame:",rect(x0,y+28,colW,14));send<void>(get(col,"reset"),"setStringValue:",reset);
+  send<void>(get(col,"reset"),"setFrame:",rect(x0,y+31,colW,14));send<void>(get(col,"reset"),"setStringValue:",reset);
  }
  Obj tip=usageAsking(p)?str(T("Checking limit…","Проверяю лимит…")):cat(str(T("Click to refresh · checked ","Нажмите, чтобы обновить · проверено ")),usageAgeText(send<double>(get(u,"checked"),"doubleValue")));
  if(get(u,"detail"))tip=cat(cat(tip,str("\n")),get(u,"detail"));send<void>(get(ref,"hit"),"setToolTip:",u?tip:str(T("Click to ask Codex for the limit","Нажмите, чтобы запросить лимит у Codex")));

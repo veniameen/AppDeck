@@ -20,7 +20,7 @@ bool building=false,quitting=false,previewMode=false;
 bool ruUI=false;
 inline const char* T(const char* en,const char* ru){return ruUI?ru:en;}
 int lockFd=-1;
-const double colors[6][3]={{0.47,0.68,0.96},{0.46,0.79,0.65},{0.86,0.69,0.44},{0.72,0.59,0.91},{0.91,0.55,0.64},{0.40,0.76,0.80}};
+const double colors[6][3]={{0.42,0.62,1.00},{0.33,0.83,0.64},{0.98,0.72,0.35},{0.67,0.54,1.00},{1.00,0.49,0.62},{0.31,0.78,0.88}};
 void buildUI();void buildMenus();void save();void refresh();
 void showError(Obj title,Obj message);
 Obj currentApp();
@@ -30,7 +30,11 @@ void showWindowAction(Obj,Sel,Obj);void focus(Obj);bool isMaster(Obj);
 void syncBaseProjectsAction(Obj,Sel,Obj);void toggleHistoryAction(Obj,Sel,Obj);void toggleUsageAction(Obj,Sel,Obj);void usageSanitize(Obj);void usagePump();Obj cleanEnvironment();bool askUsage(Obj);void usageForce(Obj);
 bool groupSyncEnabled(Obj);Obj syncGroup(Obj,bool);void groupSyncPump(bool);void automationOwnerAction(Obj,Sel,Obj);
 Obj color(double r,double g,double b,double a=1){return send(cls("NSColor"),"colorWithSRGBRed:green:blue:alpha:",r,g,b,a);}
-Obj ink(){return color(.91,.92,.95);}Obj liveColor(){return color(.43,.80,.58);}Obj muted(){return color(.55,.59,.65);}Obj accent(){return color(.48,.67,.96);}
+// Design tokens: one dark, translucent palette for the whole app (text, surfaces, accents, states).
+Obj ink(){return color(.95,.96,.98);}Obj muted(){return color(.63,.67,.74);}Obj faint(){return color(.46,.50,.57);}
+Obj accent(){return color(.46,.62,1.0);}Obj accentDeep(){return color(.40,.40,.98);}
+Obj liveColor(){return color(.35,.85,.58);}Obj warnColor(){return color(.98,.74,.38);}Obj dangerColor(){return color(1.0,.47,.49);}
+Obj surface(){return color(1,1,1,.045);}Obj hairline(){return color(1,1,1,.085);}
 Obj accentFor(Obj p){Int i=integer(get(p,"color"))%6;if(i<0)i=0;return color(colors[i][0],colors[i][1],colors[i][2]);}
 Obj canonical(Obj p){return send(send(p,"stringByStandardizingPath"),"stringByResolvingSymlinksInPath");}
 Obj url(Obj p){return send(cls("NSURL"),"fileURLWithPath:",p);}
@@ -370,36 +374,76 @@ Obj label(Obj parent,const char* text,Rect f,double size=13,Obj c=nullptr,double
  send<void>(parent,"addSubview:",v);return v;
 }
 Obj labelObj(Obj parent,Obj text,Rect f,double size=13,Obj c=nullptr,double weight=0){return label(parent,utf8(text),f,size,c,weight);}
+Obj monoFont(double size,double weight){return send(cls("NSFont"),"monospacedDigitSystemFontOfSize:weight:",size,weight);}
+void continuous(Obj layer){send<void>(layer,"setCornerCurve:",str("continuous"));}
+double textWidth(const char* text,double size,double weight){
+ Obj attrs=dict();send<void>(attrs,"setObject:forKey:",send(cls("NSFont"),"systemFontOfSize:weight:",size,weight),str("NSFont"));
+ return send<Extent>(str(text),"sizeWithAttributes:",attrs).width;
+}
+// Width of a button whose title (and optional icon) should fit with comfortable padding.
+double fitWidth(const char* title,bool icon,double size=12.5){return (double)(Int)(textWidth(title,size,.3)+(icon?22:0)+30);}
 // One button system for the whole app: borderless, layer-backed, with hover. The style name
 // lives in the view identifier so the hover handlers need no per-instance storage.
 Obj buttonFill(Obj self,bool hover){
  Obj k=send(self,"identifier");
- if(same(k,str("primary")))return hover?color(.34,.53,.88):color(.27,.46,.80);
- if(same(k,str("danger")))return hover?color(.80,.30,.33,.34):color(.80,.30,.33,.18);
+ if(same(k,str("primary")))return hover?color(1,1,1,.12):color(0,0,0,0); // over its gradient backdrop
+ if(same(k,str("danger")))return hover?color(1,.40,.42,.26):color(1,.40,.42,.14);
  if(same(k,str("overlay")))return hover?color(1,1,1,.06):color(0,0,0,0);
- if(same(k,str("edge")))return hover?color(1,1,1,.15):color(1,1,1,.065);
- return hover?color(1,1,1,.13):color(1,1,1,.07);
+ if(same(k,str("ghost")))return hover?color(1,1,1,.07):color(0,0,0,0);
+ if(same(k,str("edge")))return hover?color(1,1,1,.14):color(1,1,1,.07);
+ return hover?color(1,1,1,.12):color(1,1,1,.065);
 }
 void buttonEntered(Obj self,Sel,Obj){if(send<bool>(self,"isEnabled"))send<void>(send(self,"layer"),"setBackgroundColor:",send(buttonFill(self,true),"CGColor"));}
 void buttonExited(Obj self,Sel,Obj){send<void>(send(self,"layer"),"setBackgroundColor:",send(buttonFill(self,false),"CGColor"));}
 bool firstMouse(Obj,Sel,Obj){return true;}
-Obj styledButton(Class kind,Obj parent,const char* title,const char* action,Rect f,Int tag,const char* style,double radius=8,double size=12.5){
+Obj symbol(const char* name,double size=14);
+// Primary actions sit on a soft accent gradient with a light rim and glow; the button above it stays
+// transparent, so hover simply brightens the gradient.
+void primaryBackdrop(Obj parent,Rect f,double radius){
+ Obj v=send(send((Obj)deckViewClass,"alloc"),"initWithFrame:",f);send<void>(v,"setWantsLayer:",true);send<void>(parent,"addSubview:",v);drop(v);
+ Obj layer=send(v,"layer"),g=send(cls("CAGradientLayer"),"layer");
+ Obj colors=array();add(colors,send(accent(),"CGColor"));add(colors,send(accentDeep(),"CGColor"));
+ send<void>(g,"setColors:",colors);send<void>(g,"setStartPoint:",Point{0,0});send<void>(g,"setEndPoint:",Point{1,1});
+ send<void>(g,"setFrame:",rect(0,0,f.size.width,f.size.height));send<void>(g,"setCornerRadius:",radius);continuous(g);
+ send<void>(g,"setBorderWidth:",1.0);send<void>(g,"setBorderColor:",send(color(1,1,1,.16),"CGColor"));send<void>(layer,"addSublayer:",g);
+ send<void>(layer,"setShadowColor:",send(accent(),"CGColor"));send<void>(layer,"setShadowOpacity:",(float).35);send<void>(layer,"setShadowRadius:",9.0);send<void>(layer,"setShadowOffset:",Extent{0,0});
+}
+Obj styledButton(Class kind,Obj parent,const char* title,const char* action,Rect f,Int tag,const char* style,double radius=9,double size=12.5,const char* icon=nullptr){
+ bool primary=strcmp(style,"primary")==0,danger=strcmp(style,"danger")==0,secondary=strcmp(style,"secondary")==0;
+ if(primary)primaryBackdrop(parent,f,radius);
  Obj b=send(send((Obj)kind,"alloc"),"initWithFrame:",f);send<void>(b,"setTitle:",str(title));send<void>(b,"setBordered:",false);
- send<void>(b,"setFont:",send(cls("NSFont"),"systemFontOfSize:weight:",size,0.23));send<void>(b,"setTarget:",controller);send<void>(b,"setAction:",sel(action));send<void>(b,"setTag:",tag);
- send<void>(b,"setIdentifier:",str(style));send<void>(b,"setWantsLayer:",true);Obj layer=send(b,"layer");send<void>(layer,"setCornerRadius:",radius);
+ send<void>(b,"setFont:",send(cls("NSFont"),"systemFontOfSize:weight:",size,primary?0.3:0.23));send<void>(b,"setTarget:",controller);send<void>(b,"setAction:",sel(action));send<void>(b,"setTag:",tag);
+ send<void>(b,"setIdentifier:",str(style));send<void>(b,"setWantsLayer:",true);Obj layer=send(b,"layer");send<void>(layer,"setCornerRadius:",radius);continuous(layer);
  send<void>(layer,"setBackgroundColor:",send(buttonFill(b,false),"CGColor"));
- send<void>(b,"setContentTintColor:",strcmp(style,"primary")==0?color(.97,.98,1.0):strcmp(style,"danger")==0?color(.98,.66,.66):ink());
+ if(secondary||danger){send<void>(layer,"setBorderWidth:",1.0);send<void>(layer,"setBorderColor:",send(danger?color(1,.45,.47,.22):hairline(),"CGColor"));}
+ if(icon){if(*title)send<void>(b,"setTitle:",cat(str(" "),str(title))); // a word space between icon and title
+  send<void>(b,"setImage:",symbol(icon,size));send<void>(b,"setImagePosition:",(UInt)(*title?7:1));send<void>(b,"setImageHugsTitle:",true);} // NSImageLeading / NSImageOnly
+ send<void>(b,"setContentTintColor:",primary?color(1,1,1):danger?color(1,.62,.63):ink());
  // NSTrackingMouseEnteredAndExited | ActiveAlways | InVisibleRect: hover also works in the nonactivating dock.
  Obj area=send(send(cls("NSTrackingArea"),"alloc"),"initWithRect:options:owner:userInfo:",rect(0,0,0,0),(UInt)(0x01|0x80|0x200),b,(Obj)nullptr);
  send<void>(b,"addTrackingArea:",area);drop(area);send<void>(parent,"addSubview:",b);drop(b);return b;
 }
-Obj button(Obj parent,const char* title,const char* action,Rect f,Int tag=-1,bool primary=false){return styledButton(deckButtonClass,parent,title,action,f,tag,primary?"primary":"secondary");}
+Obj button(Obj parent,const char* title,const char* action,Rect f,Int tag=-1,bool primary=false,const char* icon=nullptr){return styledButton(deckButtonClass,parent,title,action,f,tag,primary?"primary":"secondary",9,12.5,icon);}
 Obj checkbox(Obj parent,const char* title,Rect f,bool on){
  Obj b=send(cls("NSButton"),"checkboxWithTitle:target:action:",str(title),controller,sel("noop:"));send<void>(b,"setFrame:",f);send<void>(b,"setState:",(Int)(on?1:0));send<void>(parent,"addSubview:",b);return b;
 }
 Obj panel(Obj parent,Rect f,Obj bg,double radius=14){
- Obj p=send(send((Obj)deckViewClass,"alloc"),"initWithFrame:",f);send<void>(p,"setWantsLayer:",true);Obj layer=send(p,"layer");send<void>(layer,"setBackgroundColor:",send(bg,"CGColor"));send<void>(layer,"setCornerRadius:",radius);
+ Obj p=send(send((Obj)deckViewClass,"alloc"),"initWithFrame:",f);send<void>(p,"setWantsLayer:",true);Obj layer=send(p,"layer");send<void>(layer,"setBackgroundColor:",send(bg,"CGColor"));send<void>(layer,"setCornerRadius:",radius);continuous(layer);
  send<void>(parent,"addSubview:",p);drop(p);return p;
+}
+// A glass card: a faint fill with a hairline rim.
+Obj card(Obj parent,Rect f,double radius=16,Obj fill=nullptr){
+ Obj c=panel(parent,f,fill?fill:surface(),radius);Obj l=send(c,"layer");send<void>(l,"setBorderWidth:",1.0);send<void>(l,"setBorderColor:",send(hairline(),"CGColor"));return c;
+}
+// A key cap such as ⌘1 or ⌃⌥Space.
+Obj keycap(Obj parent,const char* text,Rect f){
+ Obj k=card(parent,f,6,color(1,1,1,.05));Obj t=label(k,text,rect(0,(f.size.height-14)/2,f.size.width,14),10.5,muted(),.23);send<void>(t,"setAlignment:",alignCenter);return k;
+}
+// A status light; its colour follows the profile state.
+Obj statusDot(Obj parent,Rect f){return panel(parent,f,faint(),f.size.width/2);}
+void statusDotColor(Obj dot,Obj c,bool glow){
+ Obj l=send(dot,"layer");send<void>(l,"setBackgroundColor:",send(c,"CGColor"));
+ send<void>(l,"setShadowColor:",send(c,"CGColor"));send<void>(l,"setShadowOpacity:",(float)(glow?.8:0));send<void>(l,"setShadowRadius:",4.0);send<void>(l,"setShadowOffset:",Extent{0,0});
 }
 Obj popup(Obj parent,Rect f,const char* const* choices,UInt n,Int selectedIndex){
  Obj p=send(send(cls("NSPopUpButton"),"alloc"),"initWithFrame:pullsDown:",f,false);
@@ -525,55 +569,67 @@ Obj imageView(Obj parent,Obj image,Rect f,Obj tint=nullptr){
  send<void>(parent,"addSubview:",v);drop(v);return v;
 }
 void appIcon(Obj parent,Obj path,Rect f){imageView(parent,send(workspace,"iconForFile:",path),f);}
-Obj symbol(const char* name,double size=14){
+Obj symbol(const char* name,double size){
  Obj image=send(cls("NSImage"),"imageWithSystemSymbolName:accessibilityDescription:",str(name),(Obj)nullptr);
- Obj config=send(cls("NSImageSymbolConfiguration"),"configurationWithPointSize:weight:",size,0.0);return image&&config?send(image,"imageWithSymbolConfiguration:",config):image;
+ Obj config=send(cls("NSImageSymbolConfiguration"),"configurationWithPointSize:weight:",size,0.23);return image&&config?send(image,"imageWithSymbolConfiguration:",config):image;
+}
+// An SF Symbol on a small tinted square, as in System Settings.
+Obj iconTile(Obj parent,Rect f,const char* name,Obj tint){
+ Obj t=panel(parent,f,send(tint,"colorWithAlphaComponent:",.18),f.size.width*.28);imageView(t,symbol(name,f.size.width*.46),rect(0,0,f.size.width,f.size.height),tint);return t;
 }
 // Sidebar row: background, icon, title and a transparent hover/click layer over the whole row.
 Obj navRow(Obj parent,Rect f,Obj image,bool tinted,Obj title,const char* action,Int tag,bool selected){
- Obj row=panel(parent,f,selected?color(.15,.21,.30):color(0,0,0,0),9);double h=f.size.height;
- if(image)imageView(row,image,rect(10,(h-20)/2,20,20),tinted?(selected?accent():muted()):nullptr);
- labelObj(row,title,rect(40,(h-18)/2-1,f.size.width-48,18),13,selected?ink():color(.76,.79,.84),selected?.3:.1);
- Obj b=styledButton(deckButtonClass,row,"",action,rect(0,0,f.size.width,h),tag,"overlay",9);send<void>(b,"setAccessibilityLabel:",title);return b;
+ Obj row=panel(parent,f,selected?color(1,1,1,.10):color(0,0,0,0),8);double h=f.size.height;
+ if(selected){Obj l=send(row,"layer");send<void>(l,"setBorderWidth:",1.0);send<void>(l,"setBorderColor:",send(color(1,1,1,.06),"CGColor"));}
+ if(image)imageView(row,image,rect(10,(h-18)/2,18,18),tinted?(selected?accent():muted()):nullptr);
+ labelObj(row,title,rect(38,(h-17)/2,f.size.width-46,17),13,selected?ink():color(.80,.83,.88),selected?.3:.2);
+ Obj b=styledButton(deckButtonClass,row,"",action,rect(0,0,f.size.width,h),tag,"overlay",8);send<void>(b,"setAccessibilityLabel:",title);return b;
 }
 Obj cardFact(Obj c,const char* caption,const char* value,double x,double w,Obj tint=nullptr){
- label(c,caption,rect(x,90,w-8,14),9.5,muted(),.25);return label(c,value,rect(x,107,w-8,20),13,tint?tint:ink(),.1);
+ label(c,caption,rect(x,90,w-8,13),10,faint(),.3);return label(c,value,rect(x,106,w-8,19),13,tint?tint:ink(),.23);
 }
 // Account label, plan pill and limit strip follow the cached record; called on build and on every refresh.
 void usageApplyCard(Obj ref,Obj p){
  Obj u=usageOf(p),accountLabel=get(ref,"account");if(!accountLabel)return;Obj email=get(u,"email");
- Obj twin=usageTwin(p);send<void>(accountLabel,"setTextColor:",twin?color(.93,.72,.42):ink());
+ Obj twin=usageTwin(p);send<void>(accountLabel,"setTextColor:",twin?warnColor():ink());
  bool claudeCard=usageIsClaude(appFor(p));
- send<void>(accountLabel,"setStringValue:",email?(twin?cat(str("⚠ "),email):email):str(isMaster(p)?(claudeCard?T("Current sign-in","Текущий вход"):T("Current Codex","Текущий Codex")):T("Separate sign-in","Отдельный вход")));send<void>(accountLabel,"setFont:",send(cls("NSFont"),"systemFontOfSize:weight:",email?12.0:13.0,.1));send<void>(accountLabel,"setToolTip:",!email?(Obj)nullptr:twin?cat(cat(cat(str(T("Same account as in profile “","Тот же аккаунт, что и в профиле «")),get(twin,"name")),str(T("”: they share one limit. To use another account in this profile, sign out in its window and sign in with the right one.\n","»: лимит у них общий. Чтобы профиль работал под другим аккаунтом, выйдите из аккаунта в его окне и войдите под нужным.\n"))),email):cat(str(claudeCard?T("The Claude Code sign-in AppDeck uses to ask for limits. It must match the account in this profile's window: ","Вход Claude Code, по которому AppDeck спрашивает лимиты. Он должен совпадать с аккаунтом в окне этого профиля: "):T("Account signed in to this profile: ","Аккаунт, вошедший в этот профиль: ")),email));
+ send<void>(accountLabel,"setStringValue:",email?(twin?cat(str("⚠ "),email):email):str(isMaster(p)?(claudeCard?T("Current sign-in","Текущий вход"):T("Current Codex","Текущий Codex")):T("Separate sign-in","Отдельный вход")));send<void>(accountLabel,"setFont:",send(cls("NSFont"),"systemFontOfSize:weight:",email?12.5:13.0,.23));send<void>(accountLabel,"setToolTip:",!email?(Obj)nullptr:twin?cat(cat(cat(str(T("Same account as in profile “","Тот же аккаунт, что и в профиле «")),get(twin,"name")),str(T("”: they share one limit. To use another account in this profile, sign out in its window and sign in with the right one.\n","»: лимит у них общий. Чтобы профиль работал под другим аккаунтом, выйдите из аккаунта в его окне и войдите под нужным.\n"))),email):cat(str(claudeCard?T("The Claude Code sign-in AppDeck uses to ask for limits. It must match the account in this profile's window: ","Вход Claude Code, по которому AppDeck спрашивает лимиты. Он должен совпадать с аккаунтом в окне этого профиля: "):T("Account signed in to this profile: ","Аккаунт, вошедший в этот профиль: ")),email));
  Obj plan=get(u,"plan");usageHide(get(ref,"planPill"),!plan);if(plan)send<void>(get(ref,"planLabel"),"setStringValue:",send(plan,"uppercaseString"));
  usageApplyStrip(get(ref,"usage"),p);
 }
 const char* adapterTitle(Obj a){switch(deck::adapter(utf8(get(a,"adapter")))){case deck::Adapter::Codex:return "Codex";case deck::Adapter::VSCode:return "VS Code";case deck::Adapter::Chromium:return "Chromium";case deck::Adapter::Electron:return "Electron";case deck::Adapter::Claude:return "Claude";default:return "—";}}
-double cardHeightFor(Obj a){return usageEnabled(a)?244:196;}
+double cardHeightFor(Obj a){return usageEnabled(a)?252:190;}
 void makeCard(Obj parent,Obj p,Rect frame,Int ordinal){
- Obj c=panel(parent,frame,color(.098,.11,.133));Obj l=send(c,"layer");send<void>(l,"setBorderWidth:",1.0);send<void>(l,"setBorderColor:",send(color(.18,.20,.24),"CGColor"));
- Obj a=appFor(p);double w=frame.size.width,cardHeight=frame.size.height;bool codex=deck::adapter(utf8(get(a,"adapter")))==deck::Adapter::Codex,master=isMaster(p),limits=usageEnabled(a);Obj ref=dict();
- panel(c,rect(0,22,3,36),accentFor(p),1.5);appIcon(c,get(a,"path"),rect(20,20,40,40));
- labelObj(c,get(p,"name"),rect(72,17,w-72-66-(limits?52:0),24),17,ink(),.3);
- if(limits){Obj planPill=panel(c,rect(w-56-8-46,19,46,21),color(.27,.46,.80,.24),6);Obj planLabel=label(planPill,"",rect(0,3,46,15),10,color(.72,.83,1.0),.3);send<void>(planLabel,"setAlignment:",alignCenter);put(ref,"planPill",planPill);put(ref,"planLabel",planLabel);}
- Obj st=label(c,T("○  Not running","○  Не запущен"),rect(72,43,w-72-112,18),12,muted());
- if(ordinal<9){char b[16];snprintf(b,sizeof b,"⌘%ld",ordinal+1);Obj pill=panel(c,rect(w-56,19,38,21),color(1,1,1,.06),6);Obj key=label(pill,b,rect(0,3,38,15),10.5,muted(),.1);send<void>(key,"setAlignment:",alignCenter);}
- if(get(p,"lastError"))styledButton(deckButtonClass,c,T("Details","Подробнее"),"profileError:",rect(w-104,43,86,22),profileIndex(p),"secondary",6,11);
- panel(c,rect(20,76,w-40,1),color(1,1,1,.06),0);double col=(w-40)/3;
- Obj accountLabel=cardFact(c,T("ACCOUNT","АККАУНТ"),master?(codex?T("Current Codex","Текущий Codex"):T("Current sign-in","Текущий вход")):T("Separate sign-in","Отдельный вход"),20,col);send<void>(accountLabel,"setLineBreakMode:",(Int)5);if(limits)put(ref,"account",accountLabel);
- if(limits)put(ref,"usage",usageStrip(c,20,140,w-40,profileIndex(p)));
- if(codex){cardFact(c,T("SETTINGS","НАСТРОЙКИ"),master?T("Original","Оригинал"):truth(get(p,"share"))?T("From base","Из базы"):T("Local","Локальные"),20+col,col,!master&&truth(get(p,"share"))?accentFor(p):nullptr);
-  cardFact(c,T("HISTORY","ИСТОРИЯ"),master?T("Original","Оригинал"):sharesHistory(p)?T("Shared","Общая"):T("Own","Своя"),20+col*2,col,sharesHistory(p)?accentFor(p):nullptr);}
- else{cardFact(c,T("DATA","ДАННЫЕ"),master?T("Original","Оригинал"):T("Own folder","Своя папка"),20+col,col);cardFact(c,T("ADAPTER","АДАПТЕР"),adapterTitle(a),20+col*2,col);}
- double by=cardHeight-50;Int tag=profileIndex(p);button(c,"•••","profileMore:",rect(w-16-44,by,44,34),tag);
+ Obj c=card(parent,frame,16);Obj a=appFor(p);double w=frame.size.width,cardHeight=frame.size.height;
+ bool codex=deck::adapter(utf8(get(a,"adapter")))==deck::Adapter::Codex,master=isMaster(p),limits=usageEnabled(a);Obj ref=dict();
+ // Identity: the app icon on a tile in the profile's colour, the name and a status light.
+ Obj tile=panel(c,rect(18,18,44,44),send(accentFor(p),"colorWithAlphaComponent:",.16),12);Obj tl=send(tile,"layer");
+ send<void>(tl,"setBorderWidth:",1.0);send<void>(tl,"setBorderColor:",send(send(accentFor(p),"colorWithAlphaComponent:",.38),"CGColor"));
+ appIcon(tile,get(a,"path"),rect(6,6,32,32));
+ double rx=w-18;
+ if(ordinal<9){char b[16];snprintf(b,sizeof b,"⌘%ld",ordinal+1);rx-=34;keycap(c,b,rect(rx,20,34,22));rx-=8;}
+ if(limits){Obj planPill=panel(c,rect(rx-50,20,50,22),send(accent(),"colorWithAlphaComponent:",.17),11);Obj planLabel=label(planPill,"",rect(0,4,50,14),10,color(.74,.81,1.0),.4);send<void>(planLabel,"setAlignment:",alignCenter);put(ref,"planPill",planPill);put(ref,"planLabel",planLabel);rx-=58;}
+ labelObj(c,get(p,"name"),rect(76,18,rx-76-6,22),16,ink(),.4);
+ Obj dot=statusDot(c,rect(77,48,7,7));Obj st=label(c,T("Not running","Не запущен"),rect(90,43,w-90-18-(get(p,"lastError")?96:0),16),12,muted(),.23);
+ if(get(p,"lastError"))styledButton(deckButtonClass,c,T("Details","Подробнее"),"profileError:",rect(w-18-88,41,88,24),profileIndex(p),"secondary",7,11,"exclamationmark.triangle");
+ panel(c,rect(18,76,w-36,1),hairline(),0);double col=(w-36)/3;
+ Obj accountLabel=cardFact(c,T("ACCOUNT","АККАУНТ"),master?(codex?T("Current Codex","Текущий Codex"):T("Current sign-in","Текущий вход")):T("Separate sign-in","Отдельный вход"),18,col);send<void>(accountLabel,"setLineBreakMode:",(Int)5);if(limits)put(ref,"account",accountLabel);
+ if(limits)put(ref,"usage",usageStrip(c,18,140,w-36,profileIndex(p)));
+ if(codex){cardFact(c,T("SETTINGS","НАСТРОЙКИ"),master?T("Original","Оригинал"):truth(get(p,"share"))?T("From base","Из базы"):T("Local","Локальные"),18+col,col,!master&&truth(get(p,"share"))?accentFor(p):nullptr);
+  cardFact(c,T("HISTORY","ИСТОРИЯ"),master?T("Original","Оригинал"):sharesHistory(p)?T("Shared","Общая"):T("Own","Своя"),18+col*2,col,sharesHistory(p)?accentFor(p):nullptr);}
+ else{cardFact(c,T("DATA","ДАННЫЕ"),master?T("Original","Оригинал"):T("Own folder","Своя папка"),18+col,col);cardFact(c,T("ADAPTER","АДАПТЕР"),adapterTitle(a),18+col*2,col);}
+ // Actions: the main one on the accent gradient, the others as glass buttons with icons.
+ double by=cardHeight-52;Int tag=profileIndex(p);
+ Obj more=button(c,"","profileMore:",rect(w-18-40,by,40,34),tag,false,"ellipsis");send<void>(more,"setToolTip:",str(T("More actions","Другие действия")));send<void>(more,"setAccessibilityLabel:",str(T("More actions","Другие действия")));
  if(running(p)){ // running: close / restart / bring the window forward
-  const double windowW=76,restartW=132,closeW=w-32-44-windowW-restartW-24;
-  Obj close=styledButton(deckButtonClass,c,T("Close","Закрыть"),"stopProfile:",rect(16,by,closeW,34),tag,"danger");send<void>(close,"setToolTip:",str(T("Send the window a normal quit request (the process is never force-killed)","Отправить окну обычный запрос завершения (без принудительного убийства процесса)")));
-  Obj again=button(c,T("Restart","Перезапустить"),"restartProfile:",rect(16+closeW+8,by,restartW,34),tag);send<void>(again,"setToolTip:",str(T("Close the window and launch the profile again right away — for example to pick up new projects and settings","Закрыть окно и сразу запустить профиль заново — например, чтобы подтянуть новые проекты и настройки")));
-  Obj front=button(c,T("Window","Окно"),"launchProfile:",rect(16+closeW+8+restartW+8,by,windowW,34),tag,true);send<void>(front,"setToolTip:",str(T("Bring this profile's window to the front","Вывести окно этого профиля на передний план")));
- }else{double launchW=w-32-84-44-16;button(c,T("Launch","Запустить"),"launchProfile:",rect(16,by,launchW,34),tag,true);
-  Obj folder=button(c,T("Folder","Папка"),"profileFolder:",rect(16+launchW+8,by,84,34),tag);send<void>(folder,"setToolTip:",shortPath(master?masterFolder(a):profileRoot(p)));}
- put(ref,"status",st);put(ref,"live",boolean(running(p)!=nullptr));put(cardRefs,utf8(get(p,"id")),ref);usageApplyCard(ref,p);
+  double avail=w-36-40-16,closeW=avail*.27,restartW=avail*.38,windowW=avail-closeW-restartW;
+  Obj close=styledButton(deckButtonClass,c,T("Close","Закрыть"),"stopProfile:",rect(18,by,closeW,34),tag,"danger",9,12.5,"xmark");send<void>(close,"setToolTip:",str(T("Send the window a normal quit request (the process is never force-killed)","Отправить окну обычный запрос завершения (без принудительного убийства процесса)")));
+  Obj again=button(c,T("Restart","Перезапустить"),"restartProfile:",rect(18+closeW+8,by,restartW-8,34),tag,false,"arrow.clockwise");send<void>(again,"setToolTip:",str(T("Close the window and launch the profile again right away — for example to pick up new projects and settings","Закрыть окно и сразу запустить профиль заново — например, чтобы подтянуть новые проекты и настройки")));
+  Obj front=button(c,T("Window","Окно"),"launchProfile:",rect(18+closeW+restartW+8,by,windowW,34),tag,true,"macwindow");send<void>(front,"setToolTip:",str(T("Bring this profile's window to the front","Вывести окно этого профиля на передний план")));
+ }else{double folderW=fitWidth(T("Folder","Папка"),true),launchW=w-36-40-8-folderW-8;
+  button(c,T("Launch","Запустить"),"launchProfile:",rect(18,by,launchW,34),tag,true,"play.fill");
+  Obj folder=button(c,T("Folder","Папка"),"profileFolder:",rect(18+launchW+8,by,folderW,34),tag,false,"folder");send<void>(folder,"setToolTip:",shortPath(master?masterFolder(a):profileRoot(p)));}
+ put(ref,"status",st);put(ref,"dot",dot);put(ref,"live",boolean(running(p)!=nullptr));put(cardRefs,utf8(get(p,"id")),ref);usageApplyCard(ref,p);
 }
 void settingRow(Obj box,double y,double w,const char* title,Obj description,const char* buttonTitle,const char* action,Int tag,bool primary=false){
  label(box,title,rect(24,y,w-220,22),15,ink(),.25);labelObj(box,description,rect(24,y+25,w-210,20),12,muted());
@@ -582,47 +638,56 @@ void settingRow(Obj box,double y,double w,const char* title,Obj description,cons
 void buildUI(){
  if(!rootView||building)return;building=true;
  Obj old=send(send(rootView,"subviews"),"copy");for(UInt i=0;i<count(old);++i)send<void>(at(old,i),"removeFromSuperview");drop(old);send<void>(cardRefs,"removeAllObjects");footer=nullptr;usageFooter=nullptr;
- Rect bounds=getRect(rootView,"bounds");double W=bounds.size.width,H=bounds.size.height;const double side=224,x=side+32,w=W-x-32;
- panel(rootView,rect(0,0,side,H),color(.073,.082,.101),0);panel(rootView,rect(side,0,1,H),color(1,1,1,.05),0);
- label(rootView,"AppDeck",rect(22,42,170,30),23,ink(),.4);label(rootView,T("ONE PLACE. MANY ACCOUNTS.","ОДНО МЕСТО. РАЗНЫЕ АККАУНТЫ."),rect(23,76,192,14),8.5,muted(),.2);
- const char* navTitles[]={T("Profiles","Профили"),T("Shared settings","Общие настройки"),T("Projects","Проекты"),T("About","О приложении")};const char* navIcons[]={"person.2","slider.horizontal.3","folder","info.circle"};
- for(Int i=0;i<4;++i)navRow(rootView,rect(12,108+i*36,side-24,32),symbol(navIcons[i]),true,str(navTitles[i]),"changePage:",i,page==i);
- label(rootView,T("APPS","ПРИЛОЖЕНИЯ"),rect(23,268,150,14),10,muted(),.2);
- double listTop=290,listH=count(apps)*40.0+4,listMax=H-listTop-132;if(listMax<76)listMax=76;if(listH>listMax)listH=listMax;
- Obj sideList=scrollDocument(rootView,rect(12,listTop,side-12,listH),count(apps)*40.0+4);
- for(UInt i=0;i<count(apps);++i){Obj a=at(apps,i);navRow(sideList,rect(0,i*40.0,side-24,36),send(workspace,"iconForFile:",get(a,"path")),false,get(a,"name"),"selectApp:",(Int)i,same(get(a,"id"),selected));}
- Obj addApp=button(rootView,T("＋  Add app","＋  Добавить приложение"),"chooseApp:",rect(12,listTop+listH+6,side-24,32));
- Obj edgeToggle=button(rootView,T("◧  Side panel    ⌃⌥Space","◧  Правая панель    ⌃⌥Space"),"toggleEdge:",rect(12,H-72,side-24,34));send<void>(edgeToggle,"setToolTip:",str(T("A slim panel at the right edge of the screen: quick launch and account switching","Узкая панель у правого края экрана: быстрый запуск и переключение аккаунтов")));
- labelObj(rootView,cat(cat(str("v"),str(VERSION)),str("  ·  native C++ / AppKit")),rect(23,H-28,192,14),9.5,muted());
+ Rect bounds=getRect(rootView,"bounds");double W=bounds.size.width,H=bounds.size.height;const double side=232,x=side+36,w=W-x-36;
+ // Glass: the whole window is a behind-window blur. The sidebar keeps most of it; the content area
+ // gets a dark veil for legibility; a hairline separates them.
+ panel(rootView,rect(0,0,side,H),color(.02,.025,.04,.16),0);panel(rootView,rect(side,0,W-side,H),color(.05,.055,.08,.80),0);panel(rootView,rect(side,0,1,H),hairline(),0);
+ imageView(rootView,send(app,"applicationIconImage"),rect(16,44,36,36));
+ label(rootView,"AppDeck",rect(58,46,164,20),16,ink(),.4);label(rootView,T("One place. Many accounts.","Одно место. Разные аккаунты."),rect(58,66,168,14),10.5,muted(),.1);
+ const char* navTitles[]={T("Profiles","Профили"),T("Shared settings","Общие настройки"),T("Projects","Проекты"),T("About","О приложении")};const char* navIcons[]={"person.2.fill","slider.horizontal.3","folder.fill","info.circle.fill"};
+ for(Int i=0;i<4;++i)navRow(rootView,rect(10,102+i*34,side-20,30),symbol(navIcons[i],14),true,str(navTitles[i]),"changePage:",i,page==i);
+ label(rootView,T("APPS","ПРИЛОЖЕНИЯ"),rect(20,254,150,13),10,faint(),.3);
+ double listTop=272,listH=count(apps)*36.0+2,listMax=H-listTop-136;if(listMax<72)listMax=72;if(listH>listMax)listH=listMax;
+ Obj sideList=scrollDocument(rootView,rect(10,listTop,side-10,listH),count(apps)*36.0+2);
+ for(UInt i=0;i<count(apps);++i){Obj a=at(apps,i);navRow(sideList,rect(0,i*36.0,side-20,32),send(workspace,"iconForFile:",get(a,"path")),false,get(a,"name"),"selectApp:",(Int)i,same(get(a,"id"),selected));}
+ navRow(rootView,rect(10,listTop+listH+4,side-20,30),symbol("plus.circle",14),true,str(T("Add app","Добавить приложение")),"chooseApp:",-1,false);
+ {Obj sp=card(rootView,rect(10,H-82,side-20,38),10,color(1,1,1,.05));imageView(sp,symbol("sidebar.right",14),rect(12,10,18,18),muted());
+  label(sp,T("Side panel","Правая панель"),rect(38,10,side-20-38-80,18),13,ink(),.23);keycap(sp,"⌃⌥Space",rect(side-20-10-66,9,66,20));
+  Obj edgeToggle=styledButton(deckButtonClass,sp,"","toggleEdge:",rect(0,0,side-20,38),-1,"overlay",10);send<void>(edgeToggle,"setAccessibilityLabel:",str(T("Side panel","Правая панель")));
+  send<void>(edgeToggle,"setToolTip:",str(T("A slim panel at the right edge of the screen: quick launch and account switching","Узкая панель у правого края экрана: быстрый запуск и переключение аккаунтов")));}
+ labelObj(rootView,cat(str("AppDeck "),str(VERSION)),rect(20,H-32,190,14),10,faint(),.1);
  Obj a=currentApp();bool codexGroup=a&&deck::adapter(utf8(get(a,"adapter")))==deck::Adapter::Codex;
  if(page==0){
-  label(rootView,T("APP PROFILES","ПРОФИЛИ ПРИЛОЖЕНИЯ"),rect(x,28,w,14),10,muted(),.2);
-  labelObj(rootView,a?get(a,"name"):str(T("Your apps, side by side","Ваши приложения, рядом")),rect(x,48,w-(a?312:0),36),27,ink(),.3);
-  if(a){const double bw=144;
-   button(rootView,T("Launch all","Запустить все"),"launchAll:",rect(W-32-bw*2-8,50,bw,34));button(rootView,T("＋  Profile","＋  Профиль"),"newProfile:",rect(W-32-bw,50,bw,34),-1,true);
-   button(rootView,T("App location…","Путь приложения…"),"changePath:",rect(W-32-bw*2-8,92,bw,30));Obj tile=button(rootView,T("2×2 grid","Сетка 2×2"),"tileWindows:",rect(W-32-bw,92,bw,30));
+  label(rootView,T("APP PROFILES","ПРОФИЛИ ПРИЛОЖЕНИЯ"),rect(x,34,w,13),10.5,faint(),.3);
+  double titleW=w;
+  if(a){const char* t1=T("App location…","Путь приложения…");const char* t2=T("2×2 grid","Сетка 2×2");const char* t3=T("Launch all","Запустить все");const char* t4=T("Profile","Профиль");
+   double w1=fitWidth(t1,true),w2=fitWidth(t2,true),w3=fitWidth(t3,true),w4=fitWidth(t4,true),bx=W-36-(w1+w2+w3+w4+24);titleW=bx-x-12;
+   button(rootView,t1,"changePath:",rect(bx,54,w1,32),-1,false,"folder");
+   Obj tile=button(rootView,t2,"tileWindows:",rect(bx+w1+8,54,w2,32),-1,false,"square.grid.2x2");
    send<void>(tile,"setToolTip:",str(T("Arrange up to four running windows of this group. Requires Accessibility access.","Разложить до четырёх запущенных окон этой группы. Нужен Универсальный доступ.")));
-   Obj origin=labelObj(rootView,cat(str(T("Original: ","Оригинал: ")),shortPath(get(a,"path"))),rect(x,94,w-320,18),11.5,muted());send<void>(origin,"setLineBreakMode:",(Int)5);
+   button(rootView,t3,"launchAll:",rect(bx+w1+w2+16,54,w3,32),-1,false,"play");button(rootView,t4,"newProfile:",rect(bx+w1+w2+w3+24,54,w4,32),-1,true,"plus");
+   Obj origin=labelObj(rootView,cat(str(T("Original: ","Оригинал: ")),shortPath(get(a,"path"))),rect(x,90,titleW,17),12,muted(),.1);send<void>(origin,"setLineBreakMode:",(Int)5);
   }
+  Obj title=labelObj(rootView,a?get(a,"name"):str(T("Your apps, side by side","Ваши приложения, рядом")),rect(x,50,titleW,34),26,ink(),.4);send<void>(title,"setLineBreakMode:",(Int)4);
   Obj visible=visibleProfiles();
   if(count(visible)){
    double gap=16,cw=(w-gap-14)/2.0,cardHeight=cardHeightFor(a);Int columns=2;if(cw<330){columns=1;cw=w-14;}
    UInt rows=(count(visible)+columns-1)/columns;
-   Obj doc=scrollDocument(rootView,rect(x,140,w,H-140-46),rows*(cardHeight+gap)+4);
+   Obj doc=scrollDocument(rootView,rect(x,126,w,H-126-56),rows*(cardHeight+gap)+4);
    for(UInt i=0;i<count(visible);++i)makeCard(doc,at(visible,i),rect((i%columns)*(cw+gap),(i/columns)*(cardHeight+gap),cw,cardHeight),(Int)i);
   }else{
-   Obj box=panel(rootView,rect(x,140,w,330),color(.093,.105,.128));Obj bl=send(box,"layer");send<void>(bl,"setBorderWidth:",1.0);send<void>(bl,"setBorderColor:",send(color(.18,.20,.24),"CGColor"));
-   label(box,T("Many accounts.\nOne workspace.","Несколько аккаунтов.\nОдна рабочая среда."),rect(36,38,w-72,84),30,ink(),.3);
-   label(box,a?T("This group has no profiles yet. Add the first one — you sign in inside the app itself.","В этой группе пока нет профилей. Добавьте первый — вход выполняется уже внутри приложения."):T("Choose Codex (ChatGPT.app), Claude or another supported app and create profiles.","Выберите Codex (ChatGPT.app), Claude или другое поддерживаемое приложение и создайте профили."),rect(38,138,w-76,24),14,muted());
-   label(box,T("Every profile is an ordinary macOS window with its own sign-in. The original .app is neither copied nor modified.","Каждый профиль — обычное окно macOS со своим входом. Исходное .app не копируется и не изменяется."),rect(38,168,w-76,24),13,muted());
-   label(box,T("Codex settings, projects and history can be shared — your choice.","Настройки, проекты и история Codex могут быть общими — по вашему выбору."),rect(38,194,w-76,24),13,muted());
-   if(a)button(box,T("＋  Create profile","＋  Создать профиль"),"newProfile:",rect(36,250,220,38),-1,true);else button(box,T("Choose app…","Выбрать приложение…"),"chooseApp:",rect(36,250,220,38),-1,true);
+   Obj box=card(rootView,rect(x,130,w,300),20);iconTile(box,rect(34,34,52,52),"rectangle.stack.badge.person.crop",accent());
+   label(box,T("Many accounts.\nOne workspace.","Несколько аккаунтов.\nОдна рабочая среда."),rect(34,100,w-68,70),26,ink(),.4);
+   label(box,a?T("This group has no profiles yet. Add the first one — you sign in inside the app itself.","В этой группе пока нет профилей. Добавьте первый — вход выполняется уже внутри приложения."):T("Choose Codex (ChatGPT.app), Claude or another supported app and create profiles.","Выберите Codex (ChatGPT.app), Claude или другое поддерживаемое приложение и создайте профили."),rect(34,176,w-68,20),13.5,muted(),.1);
+   label(box,T("Every profile is an ordinary macOS window with its own sign-in. The original .app is neither copied nor modified.","Каждый профиль — обычное окно macOS со своим входом. Исходное .app не копируется и не изменяется."),rect(34,200,w-68,20),13,faint(),.1);
+   if(a)button(box,T("Create profile","Создать профиль"),"newProfile:",rect(34,238,fitWidth(T("Create profile","Создать профиль"),true,13),36),-1,true,"plus");
+   else button(box,T("Choose app…","Выбрать приложение…"),"chooseApp:",rect(34,238,fitWidth(T("Choose app…","Выбрать приложение…"),true,13),36),-1,true,"plus.app");
   }
   bool limitsOn=usageEnabled(a),capable=usageCapable(a);double reserved=!capable?0:limitsOn?380:200;
-  footer=label(rootView,"",rect(x,H-34,w-reserved,18),11,muted());send<void>(footer,"setLineBreakMode:",(Int)4);
-  if(capable&&limitsOn){Obj again=styledButton(deckButtonClass,rootView,T("Limits ↻","Лимиты ↻"),"usageRefreshAll:",rect(W-32-92,H-40,92,26),-1,"secondary",7,11.5);send<void>(again,"setToolTip:",str(T("Check the limits of all profiles now. On its own, AppDeck asks each account at most once an hour, with 5 minutes between profiles.","Проверить лимиты всех профилей сейчас. Сам AppDeck спрашивает каждый аккаунт не чаще раза в час, с паузой 5 минут между профилями.")));
-   usageFooter=label(rootView,"",rect(W-32-92-10-270,H-35,270,16),11,muted());send<void>(usageFooter,"setAlignment:",alignRight);}
-  else if(capable){Obj enable=styledButton(deckButtonClass,rootView,T("Account limits…","Лимиты аккаунтов…"),"toggleUsage:",rect(W-32-168,H-40,168,26),-1,"secondary",7,11.5);send<void>(enable,"setToolTip:",str(T("Show on the cards and in the side panel how much of the weekly limit each account has left","Показывать на карточках и в правой панели, сколько недельного лимита осталось у каждого аккаунта")));}
+  footer=label(rootView,"",rect(x,H-37,w-reserved,17),11.5,faint(),.1);send<void>(footer,"setLineBreakMode:",(Int)4);
+  if(capable&&limitsOn){Obj again=styledButton(deckButtonClass,rootView,T("Limits","Лимиты"),"usageRefreshAll:",rect(W-36-fitWidth(T("Limits","Лимиты"),true,12),H-44,fitWidth(T("Limits","Лимиты"),true,12),28),-1,"secondary",8,12,"arrow.clockwise");send<void>(again,"setToolTip:",str(T("Check the limits of all profiles now. On its own, AppDeck asks each account at most once an hour, with 5 minutes between profiles.","Проверить лимиты всех профилей сейчас. Сам AppDeck спрашивает каждый аккаунт не чаще раза в час, с паузой 5 минут между профилями.")));
+   usageFooter=label(rootView,"",rect(W-36-fitWidth(T("Limits","Лимиты"),true,12)-10-280,H-38,280,16),11.5,faint(),.1);send<void>(usageFooter,"setAlignment:",alignRight);}
+  else if(capable){Obj enable=styledButton(deckButtonClass,rootView,T("Account limits…","Лимиты аккаунтов…"),"toggleUsage:",rect(W-36-fitWidth(T("Account limits…","Лимиты аккаунтов…"),true,12),H-44,fitWidth(T("Account limits…","Лимиты аккаунтов…"),true,12),28),-1,"secondary",8,12,"gauge.with.dots.needle.33percent");send<void>(enable,"setToolTip:",str(T("Show on the cards and in the side panel how much of the weekly limit each account has left","Показывать на карточках и в правой панели, сколько недельного лимита осталось у каждого аккаунта")));}
  }else if(page==1){
   label(rootView,T("SHARED WORKSPACE","ОБЩАЯ РАБОЧАЯ СРЕДА"),rect(x,28,w,14),10,muted(),.2);label(rootView,T("One workspace, separate sign-ins","Одна среда, разные входы"),rect(x,48,w,36),27,ink(),.3);
   if(usageIsClaude(a)){bool limitsOn=usageEnabled(a);
@@ -680,8 +745,9 @@ void refresh(){
   if(due>0){double now=send<double>(send(cls("NSDate"),"date"),"timeIntervalSince1970");if(now>=due){erase(p,"launchCheck");if(!active){put(p,"lastError",str(T("The process exited right after starting. Possible causes: an incompatible adapter, a single-instance lock or an error in the app itself. Check the window and the diagnostics.","Процесс завершился сразу после старта. Возможны несовместимый адаптер, блокировка второго экземпляра или ошибка самого приложения. Проверьте окно и диагностику.")));note("Process exited within launch watchdog interval; isolation not confirmed.");flagged=true;}save();}}
   Obj ref=get(cardRefs,utf8(get(p,"id")));
   if(ref){Obj status=get(ref,"status");bool failed=get(p,"lastError")!=nullptr;
-   send<void>(status,"setStringValue:",restarting(p)?str(T("↻  Restarting…","↻  Перезапускается…")):active?str(truth(get(p,"syncPending"))?T("●  Running · updates pending","●  Запущен · есть обновления"):T("●  Running","●  Запущен")):failed?str(T("△  Failed to start","△  Не запустился")):str(T("○  Not running","○  Не запущен")));
-   send<void>(status,"setTextColor:",restarting(p)?color(.93,.72,.42):active?liveColor():failed?color(.93,.72,.42):muted());send<void>(status,"setToolTip:",truth(get(p,"syncPending"))?str(T("The shared list and automations apply after this instance fully restarts.","Общий список и автоматизации применятся после полного перезапуска этого экземпляра.")):get(p,"lastError"));
+   send<void>(status,"setStringValue:",restarting(p)?str(T("Restarting…","Перезапускается…")):active?str(truth(get(p,"syncPending"))?T("Running · updates pending","Запущен · есть обновления"):T("Running","Запущен")):failed?str(T("Failed to start","Не запустился")):str(T("Not running","Не запущен")));
+   send<void>(status,"setTextColor:",restarting(p)||failed?warnColor():active?liveColor():muted());
+   if(Obj dot=get(ref,"dot"))statusDotColor(dot,restarting(p)||failed?warnColor():active?liveColor():faint(),active);send<void>(status,"setToolTip:",truth(get(p,"syncPending"))?str(T("The shared list and automations apply after this instance fully restarts.","Общий список и автоматизации применятся после полного перезапуска этого экземпляра.")):get(p,"lastError"));
    if(truth(get(ref,"live"))!=active)flagged=true; // the button row differs between the two states
    usageApplyCard(ref,p);}
   if(active!=truth(get(p,"uiRunning"))){put(p,"uiRunning",num(active));menuChanged=true;}
@@ -849,9 +915,12 @@ int main(){
  // Full-size content under a transparent title bar: the sidebar runs to the top edge of the window.
  send<void>(window,"setTitlebarAppearsTransparent:",true);send<void>(window,"setTitleVisibility:",(Int)1);
  send<void>(window,"setTitle:",str("AppDeck"));send<void>(window,"setReleasedWhenClosed:",false);send<void>(window,"setMinSize:",Extent{1040,720});send<void>(window,"setDelegate:",controller);
- send<void>(window,"setBackgroundColor:",color(.055,.064,.081));send<void>(window,"setFrameAutosaveName:",str("AppDeckMainWindow"));
+ send<void>(window,"setOpaque:",false);send<void>(window,"setBackgroundColor:",send(cls("NSColor"),"clearColor"));send<void>(window,"setFrameAutosaveName:",str("AppDeckMainWindow"));
+ // The window is glass: a behind-window blur (HUD material, like the side panel) under every page; pages add their own veils.
+ Obj glass=send(send(cls("NSVisualEffectView"),"alloc"),"initWithFrame:",rect(0,0,1180,780));send<void>(glass,"setMaterial:",(Int)13);send<void>(glass,"setBlendingMode:",(Int)0);
+ send<void>(glass,"setState:",(Int)1);send<void>(glass,"setAutoresizingMask:",(UInt)(2|16));send<void>(window,"setContentView:",glass);drop(glass);
  rootView=send(send((Obj)deckViewClass,"alloc"),"initWithFrame:",rect(0,0,1180,780));send<void>(rootView,"setAutoresizingMask:",(UInt)(2|16));
- send<void>(rootView,"setWantsLayer:",true);send<void>(send(rootView,"layer"),"setBackgroundColor:",send(color(.055,.064,.081),"CGColor"));send<void>(window,"setContentView:",rootView);drop(rootView);
+ send<void>(rootView,"setWantsLayer:",true);send<void>(glass,"addSubview:",rootView);drop(rootView);
  if(!previewMode){
   Obj statusBar=send(cls("NSStatusBar"),"systemStatusBar");statusItem=keep(send(statusBar,"statusItemWithLength:",-1.0));Obj statusButton=send(statusItem,"button");
   Obj icon=send(cls("NSImage"),"imageWithSystemSymbolName:accessibilityDescription:",str("square.grid.2x2"),str("AppDeck"));if(icon){send<void>(icon,"setTemplate:",true);send<void>(statusButton,"setImage:",icon);}else send<void>(statusButton,"setTitle:",str("AD"));
