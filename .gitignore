@@ -1,0 +1,9 @@
+# Build outputs
+build/
+*.dSYM/
+
+# macOS
+.DS_Store
+
+# Local tool settings
+.claude/settings.local.json

@@ -1,0 +1,38 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Test and build
+        run: |
+          make test
+          make app
+          python3 tools/verify_bundle.py build/AppDeck.app
+
+      - name: Check that the tag matches the app version
+        run: |
+          VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' assets/Info.plist)"
+          [[ "v$VERSION" == "$GITHUB_REF_NAME" ]] || { echo "Tag $GITHUB_REF_NAME does not match Info.plist $VERSION"; exit 1; }
+
+      - name: Package
+        run: |
+          ditto -c -k --keepParent build/AppDeck.app AppDeck.zip
+          shasum -a 256 AppDeck.zip > AppDeck.zip.sha256
+          VERSION="${GITHUB_REF_NAME#v}"
+          awk -v v="$VERSION" '/^## /{p=($2==v); next} p' CHANGELOG.md > notes.md
+          printf '\n---\nAd-hoc signed, not notarized. After moving AppDeck.app to Applications, allow it once in System Settings → Privacy & Security → Open Anyway.\n' >> notes.md
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" AppDeck.zip AppDeck.zip.sha256 --title "AppDeck ${GITHUB_REF_NAME#v}" --notes-file notes.md

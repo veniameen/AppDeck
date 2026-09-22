@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Localization check and portable tests (ASan/UBSan)
+        run: make test
+
+      - name: Build the universal app
+        run: make app
+
+      - name: Static bundle check (both slices, system imports only, signature)
+        run: python3 tools/verify_bundle.py build/AppDeck.app
+
+      - name: Package
+        run: ditto -c -k --keepParent build/AppDeck.app build/AppDeck.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AppDeck
+          path: build/AppDeck.zip
+          if-no-files-found: error

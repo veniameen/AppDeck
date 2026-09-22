@@ -1,0 +1,3 @@
+/* English Info.plist strings (the same as assets/Info.plist); present so that macOS offers both localizations. */
+NSAppleEventsUsageDescription = "AppDeck asks a profile's window to reopen — the same event the Dock icon sends.";
+NSHumanReadableCopyright = "© 2026 AppDeck contributors · MIT License";
