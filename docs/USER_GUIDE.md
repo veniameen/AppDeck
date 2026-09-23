@@ -177,7 +177,7 @@ Some networks reach OpenAI or Anthropic only through a proxy — for example whe
 
 When a profile with a proxy starts, AppDeck starts a small private bridge for that window (`appdeck-proxy`, part of AppDeck): it listens on `127.0.0.1` only, takes the first address that answers and adds the login and password, which Chromium-based apps cannot send themselves. The app is started with `--proxy-server` pointing at the bridge, `--disable-quic`, a WebRTC policy that keeps UDP inside the proxy, and `HTTPS_PROXY`/`ALL_PROXY`/`NO_PROXY` plus `NODE_USE_ENV_PROXY=1` for its Node and command-line helpers. The bridge keeps running while the window runs — even if you quit AppDeck — and exits with it. Limit checks of that profile go through the same proxy.
 
-Changes apply when a profile starts; a running window keeps its connection until it is restarted. Passwords are kept in `proxies.plist` (mode 0600) in AppDeck's data folder, never in `state.plist` or the diagnostics, and reach each bridge through a pipe, never on a command line.
+This includes the primary profile — your usual Codex or Claude — when AppDeck starts it; one that was already open keeps running without the proxy until you close it and launch it from AppDeck. Changes apply when a profile starts; a running window keeps its connection until it is restarted. If `proxies.plist` cannot be read, AppDeck keeps the file untouched and does not start the profiles that use a proxy from it. Passwords are kept in `proxies.plist` (mode 0600) in AppDeck's data folder, never in `state.plist` or the diagnostics, and reach each bridge through a pipe, never on a command line.
 
 ## Window layout and permissions
 

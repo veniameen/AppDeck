@@ -146,16 +146,30 @@ bool attachMaster(Obj p,bool activate){
  Obj r=nullptr;
  if(count(candidates)>1){showError(cat(str(T("Several untracked windows found — ","Найдено несколько неучтённых окон — ")),get(a,"name")),str(T("Close the extra instances manually and keep only the primary one. AppDeck does not pick an account by an arbitrary PID.","Закройте лишние экземпляры вручную, оставив только основной. AppDeck не выбирает аккаунт по случайному PID.")));return false;}
  if(count(candidates)==1)r=at(candidates,0);
+ bool attached=r!=nullptr;Obj bridge=nullptr,proxy=nullptr;
  if(!r){
   // Launch normally: default application identity and existing credentials remain.
   // While copies are alive LaunchServices would merely re-activate one of them, so a separate
   // process is requested. It gets no profile environment or --user-data-dir: it is the original.
   bool copies=false;for(UInt j=0;j<count(all);++j){Obj other=at(all,j);Obj op=send(send(other,"bundleURL"),"path");if(op&&same(canonical(op),canonical(path))&&!send<bool>(other,"isTerminated")){copies=true;break;}}
-  Obj err=nullptr;r=send(workspace,"launchApplicationAtURL:options:configuration:error:",url(path),(UInt)((copies?(1UL<<19):0)|(activate?0:(1UL<<9))),dict(),&err);
+  // A proxy for the primary window, as for any profile: its switches and environment, nothing else.
+  if(proxyBlocked(p))return false;
+  Obj config=dict();proxy=proxyFor(p);
+  if(proxy){Obj why=nullptr;bridge=proxyServe(proxy,&why);if(!bridge){proxyUnavailable(proxy,why);return false;}
+   Obj env=cleanEnvironment(),args=array();proxyApply(env,args,(int)integer(get(bridge,"port")));
+   Obj ek=publicConstant(appKit,"NSWorkspaceLaunchConfigurationEnvironment"),ak=publicConstant(appKit,"NSWorkspaceLaunchConfigurationArguments");
+   if(!ek||!ak){proxyAbandon(bridge);showError(str(T("macOS API unavailable","API macOS недоступен")),str(T("System launch constants not found. Please send diagnostics for this macOS version.","Не найдены системные константы запуска. Отправьте диагностику этой версии macOS.")));return false;}
+   send<void>(config,"setObject:forKey:",env,ek);send<void>(config,"setObject:forKey:",args,ak);}
+  Obj err=nullptr;r=send(workspace,"launchApplicationAtURL:options:configuration:error:",url(path),(UInt)((copies?(1UL<<19):0)|(activate?0:(1UL<<9))),config,&err);
+  if(!r)proxyAbandon(bridge);
   if(!r){showError(cat(str(T("Could not open the primary window — ","Не удалось открыть основное окно — ")),get(a,"name")),err?send(err,"localizedDescription"):str(T("Open the app manually.","Запустите приложение вручную.")));return false;}
-  if(managedProcess(r)){showError(str(T("A copy opened instead of the primary window","Открылась копия, а не основное окно")),str(T("macOS returned the process of an additional profile. Close the copies, open the app from the Dock and try again.","macOS вернула процесс одного из дополнительных профилей. Закройте копии, откройте приложение из Dock и повторите.")));return false;}
+  if(managedProcess(r)){proxyAbandon(bridge);showError(str(T("A copy opened instead of the primary window","Открылась копия, а не основное окно")),str(T("macOS returned the process of an additional profile. Close the copies, open the app from the Dock and try again.","macOS вернула процесс одного из дополнительных профилей. Закройте копии, откройте приложение из Dock и повторите.")));return false;}
  }
- Obj date=send(r,"launchDate");if(!date)return false;
+ Obj date=send(r,"launchDate");if(!date){proxyAbandon(bridge);return false;}
+ if(bridge){if(!proxyWatch(bridge,send<int>(r,"processIdentifier")))showError(str(T("The proxy bridge stopped","Мост прокси остановился")),str(T("The window was started through a bridge that is no longer running, so its connections will fail. Restart the profile.","Окно запущено через мост, который уже не работает, поэтому его соединения не пройдут. Перезапустите профиль.")));put(p,"proxyUsed",get(proxy,"name"));}
+ else if(!attached)erase(p,"proxyUsed");
+ // An original that was already open keeps whatever it was started with; say so once when a proxy is chosen.
+ if(attached&&proxyFor(p)&&!get(p,"proxyUsed")&&activate)showError(str(T("The primary window runs without the proxy","Основное окно работает без прокси")),str(T("It was already open before AppDeck started it. Close it and launch it from AppDeck to use the proxy.","Оно было открыто до запуска из AppDeck. Закройте его и запустите из AppDeck, чтобы использовать прокси.")));
  put(p,"pid",num(send<int>(r,"processIdentifier")));put(p,"started",real(send<double>(date,"timeIntervalSince1970")));erase(p,"lastError");
  if(activate)focus(r);note("Attached to original Codex without rewriting its profile or credentials.");save();refresh();return true;
 }

@@ -12,6 +12,7 @@ Obj proxies=nullptr;           // [{id,name,scheme,lines[],user,pass,check{at,ok
 Obj proxyProbeBridges=nullptr; // proxy id -> {task,writer,port}: bridges for limit probes
 Obj proxyTasks=nullptr;        // every bridge started, so their processes are reaped
 Obj proxyChecking=nullptr;     // ids with a check in flight
+bool proxiesDamaged=false;     // proxies.plist exists but could not be read in full: never overwrite it, never launch without the proxy it names
 
 Obj proxyPath(){return join(dataRoot,"proxies.plist");}
 bool proxyValid(Obj x){
@@ -21,7 +22,8 @@ bool proxyValid(Obj x){
 }
 void proxyLoad(){
  Obj p=proxyPath();Obj loaded=exists(p)&&!symlink(p)?mutablePlist(p):nullptr;Obj list=array();
- if(isClass(loaded,"NSArray"))for(UInt i=0;i<count(loaded);++i){Obj x=at(loaded,i);if(!proxyValid(x))continue;
+ proxiesDamaged=exists(p)&&!isClass(loaded,"NSArray");
+ if(isClass(loaded,"NSArray"))for(UInt i=0;i<count(loaded);++i){Obj x=at(loaded,i);if(!proxyValid(x)){proxiesDamaged=true;continue;}
   for(const char* k:{"user","pass"})if(get(x,k)&&!isClass(get(x,k),"NSString"))erase(x,k);
   if(get(x,"check")&&!isClass(get(x,"check"),"NSDictionary"))erase(x,"check");
   Obj lines=get(x,"lines");for(UInt k=count(lines);k>0;--k)if(!isClass(at(lines,k-1),"NSString"))send<void>(lines,"removeObjectAtIndex:",k-1);
@@ -30,7 +32,8 @@ void proxyLoad(){
  if(get(state,"defaultProxy")&&!isClass(get(state,"defaultProxy"),"NSString"))erase(state,"defaultProxy");
 }
 bool proxySave(){
- if(previewMode||!proxies)return true;Obj p=proxyPath();if(symlink(p))return false;
+ if(previewMode||!proxies)return true;Obj p=proxyPath();
+ if(proxiesDamaged||symlink(p)){showError(str(T("Proxy settings were not read","Настройки прокси не прочитаны")),str(T("proxies.plist in AppDeck’s data folder could not be read, so AppDeck does not overwrite it. Fix or remove the file and restart AppDeck.","Файл proxies.plist в папке данных AppDeck не прочитан, поэтому AppDeck его не перезаписывает. Исправьте или удалите файл и перезапустите AppDeck.")));return false;}
  if(!send<bool>(proxies,"writeToFile:atomically:",p,true)){showError(str(T("Could not save the proxies","Не удалось сохранить прокси")),str(T("Check the permissions of the AppDeck folder in Library/Application Support.","Проверьте права на папку AppDeck в Library/Application Support.")));return false;}
  chmod(utf8(p),0600);return true;
 }
@@ -42,6 +45,17 @@ Obj proxyFor(Obj p){
  if(isClass(choice,"NSString")&&!same(choice,str("default")))return proxyById(choice);
  return proxyDefault();
 }
+// A profile that names a proxy AppDeck could not read (damaged proxies.plist) is not started at all.
+bool proxyUnresolved(Obj p){
+ Obj choice=get(p,"proxy");if(same(choice,str("none")))return false;
+ if(isClass(choice,"NSString")&&!same(choice,str("default")))return !proxyById(choice);
+ return isClass(get(state,"defaultProxy"),"NSString")&&!proxyDefault();
+}
+bool proxyBlocked(Obj p){
+ if(!proxiesDamaged||!proxyUnresolved(p))return false;
+ showError(str(T("Proxy settings were not read","Настройки прокси не прочитаны")),str(T("This profile uses a proxy from proxies.plist, which AppDeck could not read, so it was not started. Fix or remove the file in AppDeck’s data folder and restart AppDeck.","Этот профиль использует прокси из proxies.plist, который AppDeck не смог прочитать, поэтому профиль не запущен. Исправьте или удалите файл в папке данных AppDeck и перезапустите AppDeck.")));return true;
+}
+void proxyUnavailable(Obj x,Obj why){showError(cat(cat(str(T("Proxy “","Прокси «")),get(x,"name")),str(T("” is unavailable","» недоступен"))),why?why:str(""));}
 // The name to show on a card: what the running window was started with, else what the next launch will use.
 Obj proxyShownName(Obj p){if(running(p)){Obj used=get(p,"proxyUsed");return isClass(used,"NSString")?used:nullptr;}Obj x=proxyFor(p);return x?get(x,"name"):nullptr;}
 
@@ -53,6 +67,7 @@ void proxyHex(const char* s,char* out,deck::Size cap){
 Obj proxyConfig(Obj x,Obj* why){
  Obj text=cat(cat(str("scheme "),get(x,"scheme")),str("\n"));Obj lines=get(x,"lines");Int usable=0;
  const char* user=isClass(get(x,"user"),"NSString")?utf8(get(x,"user")):"";const char* pass=isClass(get(x,"pass"),"NSString")?utf8(get(x,"pass")):"";
+ if(strlen(user)>=deck::proxyFieldCap||strlen(pass)>=deck::proxyFieldCap){if(why)*why=str(T("The common login or password is longer than 255 bytes.","Общий логин или пароль длиннее 255 байт."));return nullptr;}
  for(UInt i=0;i<count(lines)&&usable<32;++i){deck::ProxyEndpoint e;if(!deck::proxyParse(utf8(at(lines,i)),e))continue;deck::proxyCredentials(e,user,pass);
   char u[2*deck::proxyFieldCap+2],pw[2*deck::proxyFieldCap+2],line[4*deck::proxyFieldCap+300];proxyHex(e.user,u,sizeof u);proxyHex(e.pass,pw,sizeof pw);
   snprintf(line,sizeof line,"endpoint %s %u %s %s\n",e.host,e.port,u,pw);text=cat(text,str(line));++usable;memset(line,0,sizeof line);memset(pw,0,sizeof pw);}
@@ -83,7 +98,10 @@ Obj proxyServe(Obj x,Obj* why){
  Obj b=dict();put(b,"task",task);put(b,"writer",writer);put(b,"port",num(port));return b;
 }
 // The bridge serves until this process exits; AppDeck's end of the pipe closes (the bridge keeps running).
-void proxyWatch(Obj b,int pid){char line[32];snprintf(line,sizeof line,"watch %d\n",pid);Obj w=get(b,"writer");write(send<int>(w,"fileDescriptor"),line,strlen(line));send<void>(w,"closeFile");}
+bool proxyWatch(Obj b,int pid){
+ char line[32];snprintf(line,sizeof line,"watch %d\n",pid);Obj w=get(b,"writer");long n=write(send<int>(w,"fileDescriptor"),line,strlen(line));send<void>(w,"closeFile");
+ return n==(long)strlen(line)&&send<bool>(get(b,"task"),"isRunning");
+}
 void proxyAbandon(Obj b){if(b)send<void>(get(b,"writer"),"closeFile");} // no watch line: the bridge leaves at once
 Obj proxyURL(int port){return formatInt("http://127.0.0.1:%ld",port);}
 // What an app is started with: Chromium's switches, and the environment for Node and CLI helpers.
@@ -113,7 +131,7 @@ bool usageProxy(Obj p,Obj env){
 }
 // ---- checks, on a worker thread: `appdeck-proxy check` proves each address with a tunnel to api.openai.com:443 ----
 void proxyCheckWorker(Obj,Sel,Obj request){
- Pool pool;Obj result=dict();put(result,"id",get(request,"id"));Obj lines=array();put(result,"lines",lines);
+ Pool pool;Obj result=dict();put(result,"id",get(request,"id"));put(result,"rev",get(request,"rev"));Obj lines=array();put(result,"lines",lines);
  Obj writer=nullptr;int rfd=-1;Obj task=proxySpawn("check",get(request,"config"),nullptr,&writer,&rfd,false);
  if(task){send<void>(writer,"closeFile");char buf[4096];deck::Size used=0;double deadline=usageUptime()+32*40; // endpoints are probed one after another, up to ~40 s each
   while(usageFill(rfd,buf,sizeof buf,used,deadline)){}buf[used]=0;

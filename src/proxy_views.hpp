@@ -47,13 +47,13 @@ bool proxyEdit(Obj x){
   else if(count(bad)){problem=T("These lines are not host:port or host:port:login:password: ","Эти строки не в формате host:port или host:port:логин:пароль: ");listBad=true;}
   else if(!count(lines))problem=T("Add at least one address.","Добавьте хотя бы один адрес.");
   else if(count(lines)>32)problem=T("At most 32 addresses.","Не больше 32 адресов.");
-  else if(send<UInt>(user,"length")>255||send<UInt>(pass,"length")>255)problem=T("The login and the password are limited to 255 characters.","Логин и пароль — не длиннее 255 символов.");
+  else if(send<UInt>(user,"lengthOfBytesUsingEncoding:",(UInt)4)>255||send<UInt>(pass,"lengthOfBytesUsingEncoding:",(UInt)4)>255)problem=T("The login and the password are limited to 255 bytes (a non-Latin letter takes two).","Логин и пароль — не длиннее 255 байт (буква кириллицы занимает два).");
   else if(send<UInt>(user,"length")&&!send<UInt>(pass,"length"))problem=T("Enter the password for the common login, or leave both empty.","Введите пароль для общего логина или оставьте оба поля пустыми.");
   if(problem){showError(str(T("The proxy was not saved","Прокси не сохранён")),listBad?cat(str(problem),send(bad,"componentsJoinedByString:",str(", "))):str(problem));continue;}
   Obj target=x;if(!target){target=dict();put(target,"id",uuid());add(proxies,target);}
   put(target,"name",name);put(target,"scheme",str(scheme==1?"socks5":"http"));put(target,"lines",lines);
   if(send<UInt>(user,"length")){put(target,"user",user);put(target,"pass",pass);}else{erase(target,"user");erase(target,"pass");}
-  erase(target,"check");proxyForget(target);proxySave();
+  erase(target,"check");put(target,"rev",uuid());proxyForget(target);proxySave(); // a check still running for the old addresses is ignored
   note("Proxy saved; credentials stay in proxies.plist (0600).");return true;
  }
 }
@@ -71,12 +71,13 @@ void proxyRemoveAction(Obj,Sel,Obj sender){
 void proxyCheckAction(Obj,Sel,Obj sender){
  Obj x=proxyFromSender(sender);if(!x||send<bool>(proxyChecking,"containsObject:",get(x,"id")))return;Obj why=nullptr;Obj config=proxyConfig(x,&why);
  if(!config){showError(str(T("Nothing to check","Нечего проверять")),why);return;}
- Obj request=dict();put(request,"id",get(x,"id"));put(request,"config",config);send<void>(proxyChecking,"addObject:",get(x,"id"));
+ Obj request=dict();put(request,"id",get(x,"id"));put(request,"config",config);put(request,"rev",get(x,"rev")?get(x,"rev"):str(""));send<void>(proxyChecking,"addObject:",get(x,"id"));
  send<void>(cls("NSThread"),"detachNewThreadSelector:toTarget:withObject:",sel("proxyCheckWorker:"),controller,request);buildUI();
 }
 // "ok <i> <ms>" / "auth <i>" / "fail <i> <reason>" per address → a small record on the proxy.
 void proxyCheckFinished(Obj,Sel,Obj result){
- Obj x=proxyById(get(result,"id"));send<void>(proxyChecking,"removeObject:",get(result,"id"));if(!x){buildUI();return;}
+ Obj x=proxyById(get(result,"id"));send<void>(proxyChecking,"removeObject:",get(result,"id"));
+ if(!x||!same(get(result,"rev"),get(x,"rev")?get(x,"rev"):str(""))){buildUI();return;} // removed or edited meanwhile: the result is for other addresses
  Obj lines=get(result,"lines");Int ok=0,total=0,fastest=-1;bool auth=false;
  for(UInt i=0;i<count(lines);++i){const char* l=utf8(at(lines,i));++total;
   if(deck::prefix(l,"ok ")){++ok;const char* ms=strchr(l+3,' ');Int v=0;if(ms)for(++ms;*ms>='0'&&*ms<='9';++ms)v=v*10+(*ms-'0');if(fastest<0||v<fastest)fastest=v;}
@@ -114,6 +115,7 @@ void proxyProfileMenu(Obj m,Obj p,Int tag){
 void buildProxyPage(double x,double w,double footY){
  double titleW=headerButtons(x+w,{{T("Add proxy","Добавить прокси"),"proxyAdd:","plus",true,nullptr}})-x-16;
  pageHeader(x,w,T("NETWORK","СЕТЬ"),str(T("Proxy","Прокси")),str(T("Route profiles through an HTTP or SOCKS5 proxy — for example past the VPN of your router.","Направляйте профили через HTTP- или SOCKS5-прокси — например, в обход VPN роутера.")),titleW);
+ if(proxiesDamaged){Obj warn=label(rootView,T("proxies.plist could not be read: AppDeck keeps the file and does not save changes. Profiles that use a proxy from it are not started.","proxies.plist не прочитан: AppDeck сохраняет файл и не записывает изменения. Профили, использующие прокси из него, не запускаются."),rect(x,116,w,16),12,warnColor(),.23);send<void>(warn,"setLineBreakMode:",(Int)4);}
  caption(rootView,T("FOR ALL PROFILES","ДЛЯ ВСЕХ ПРОФИЛЕЙ"),rect(x,138,w,14));
  Obj box=card(rootView,rect(x,160,w,settingRowH),16);Obj d=proxyDefault();
  const char* current=d?utf8(get(d,"name")):T("No proxy","Без прокси");

@@ -31,6 +31,7 @@ void showWindowAction(Obj,Sel,Obj);void focus(Obj);bool isMaster(Obj);
 void syncBaseProjectsAction(Obj,Sel,Obj);void toggleHistoryAction(Obj,Sel,Obj);void toggleUsageAction(Obj,Sel,Obj);void usageSanitize(Obj);void usagePump();Obj cleanEnvironment();bool askUsage(Obj);void usageForce(Obj);
 bool groupSyncEnabled(Obj);Obj syncGroup(Obj,bool);void groupSyncPump(bool);void automationOwnerAction(Obj,Sel,Obj);
 bool usageProxy(Obj,Obj);void proxyProfileMenu(Obj,Obj,Int); // proxy_store.hpp / proxy_views.hpp
+Obj proxyFor(Obj);Obj proxyServe(Obj,Obj*);void proxyApply(Obj,Obj,int);bool proxyWatch(Obj,int);void proxyAbandon(Obj);bool proxyBlocked(Obj);void proxyUnavailable(Obj,Obj);
 Obj color(double r,double g,double b,double a=1){return send(cls("NSColor"),"colorWithSRGBRed:green:blue:alpha:",r,g,b,a);}
 // Design tokens ("Graphite glass"): warm bone ink on dark glass. Colour appears only for state (live,
 // warn, danger) and for the profile's identity badge; controls are neutral glass.
@@ -242,12 +243,12 @@ bool launch(Obj p,bool activate=true){
   if(sharesHistory(p)){put(env,"CODEX_SQLITE_HOME",canonical(baseSource(a)));put(p,"historyMode",str("shared"));}else erase(p,"historyMode");}
  if(adapter==deck::Adapter::Claude)put(env,"CLAUDE_USER_DATA_DIR",ud);
  if(adapter==deck::Adapter::VSCode){add(args,str("--new-window"));add(args,cat(str("--extensions-dir="),join(base,"extensions")));}
- // Behind a proxy: a private loopback bridge for this window (it adds the credentials Chromium cannot send).
- Obj proxy=proxyFor(p),bridge=nullptr;
- if(proxy){Obj why=nullptr;bridge=proxyServe(proxy,&why);if(!bridge){showError(cat(cat(str(T("Proxy “","Прокси «")),get(proxy,"name")),str(T("” is unavailable","» недоступен"))),why?why:str(""));return false;}
-  proxyApply(env,args,(int)integer(get(bridge,"port")));}
+ if(proxyBlocked(p))return false; // its proxy is named in settings AppDeck could not read: never start it without one
  Obj config=dict();Obj ek=publicConstant(appKit,"NSWorkspaceLaunchConfigurationEnvironment");Obj ak=publicConstant(appKit,"NSWorkspaceLaunchConfigurationArguments");
  if(!ek||!ak){showError(str(T("macOS API unavailable","API macOS недоступен")),str(T("System launch constants not found. Please send diagnostics for this macOS version.","Не найдены системные константы запуска. Отправьте диагностику этой версии macOS.")));return false;}
+ // Behind a proxy: a private loopback bridge for this window (it adds the credentials Chromium cannot send).
+ Obj proxy=proxyFor(p),bridge=nullptr;
+ if(proxy){Obj why=nullptr;bridge=proxyServe(proxy,&why);if(!bridge){proxyUnavailable(proxy,why);return false;}proxyApply(env,args,(int)integer(get(bridge,"port")));}
  send<void>(config,"setObject:forKey:",env,ek);send<void>(config,"setObject:forKey:",args,ak);
  Obj alreadyRunning=array();
  Obj allRunning=send(workspace,"runningApplications");
@@ -260,14 +261,17 @@ bool launch(Obj p,bool activate=true){
  if(!r)proxyAbandon(bridge);
  if(!r){put(p,"lastError",err?send(err,"localizedDescription"):str(T("LaunchServices returned no process.","LaunchServices не вернул процесс.")));save();showError(str(T("Could not launch","Не удалось запустить")),get(p,"lastError"));return false;}
  int pid=send<int>(r,"processIdentifier");
- if(bridge){proxyWatch(bridge,pid);put(p,"proxyUsed",get(proxy,"name"));}else erase(p,"proxyUsed");
  for(UInt i=0;i<count(alreadyRunning);++i)if(integer(at(alreadyRunning,i))==pid){
+  proxyAbandon(bridge); // not our new process: the bridge has nothing to serve
   put(p,"lastError",str(T("The app returned an already running process instead of a new instance. Isolation not confirmed.","Вместо нового экземпляра приложение вернуло уже работавший процесс. Изоляция не подтверждена.")));save();
   showError(str(T("No separate instance was created","Отдельный экземпляр не создан")),str(T("An already running window opened, possibly outside AppDeck. Do not sign out or change settings in it. This app version did not accept an isolated launch.","Открыто уже работавшее окно, возможно вне AppDeck. Не выходите из аккаунта и не меняйте настройки в нём. Эта версия приложения не приняла изолированный запуск.")));return false;
  }
  for(UInt i=0;i<count(profiles);++i){Obj other=at(profiles,i);if(other!=p&&running(other)&&integer(get(other,"pid"))==pid){
-  showError(str(T("The app merged the instances","Приложение объединило экземпляры")),str(T("The adapter could not create a separate process. Do not change the account in this window: it belongs to another profile. This app version is not compatible.","Адаптер не смог создать отдельный процесс. Не меняйте аккаунт в этом окне: оно принадлежит другому профилю. Эта версия приложения несовместима.")));return false;}}
- Obj date=send(r,"launchDate");if(!date){showError(str(T("Could not confirm the process","Не удалось подтвердить процесс")),str(T("The app started, but macOS did not return its launch time. Check the window manually.","Приложение запущено, но macOS не вернула время запуска. Проверьте окно вручную.")));return false;}
+  proxyAbandon(bridge);showError(str(T("The app merged the instances","Приложение объединило экземпляры")),str(T("The adapter could not create a separate process. Do not change the account in this window: it belongs to another profile. This app version is not compatible.","Адаптер не смог создать отдельный процесс. Не меняйте аккаунт в этом окне: оно принадлежит другому профилю. Эта версия приложения несовместима.")));return false;}}
+ Obj date=send(r,"launchDate");if(!date){proxyAbandon(bridge);showError(str(T("Could not confirm the process","Не удалось подтвердить процесс")),str(T("The app started, but macOS did not return its launch time. Check the window manually.","Приложение запущено, но macOS не вернула время запуска. Проверьте окно вручную.")));return false;}
+ // The bridge serves this very process from now on (it keeps running if AppDeck quits).
+ if(bridge){if(!proxyWatch(bridge,pid))showError(str(T("The proxy bridge stopped","Мост прокси остановился")),str(T("The window was started through a bridge that is no longer running, so its connections will fail. Restart the profile.","Окно запущено через мост, который уже не работает, поэтому его соединения не пройдут. Перезапустите профиль.")));put(p,"proxyUsed",get(proxy,"name"));}
+ else erase(p,"proxyUsed");
  put(p,"pid",num(pid));put(p,"started",real(send<double>(date,"timeIntervalSince1970")));erase(p,"lastError");
  put(p,"launchCheck",real(send<double>(send(cls("NSDate"),"date"),"timeIntervalSince1970")+8));
  note(sharesHistory(p)?"Profile launched with the shared thread database; credentials are not inspected.":"Profile launched; credentials are not inspected.");save();refresh();return true;
