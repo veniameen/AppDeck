@@ -7,12 +7,13 @@ All notable changes to AppDeck. Verification details for the current release are
 ### Changed
 - New visual design, "Graphite glass": the main window is one behind-window blur with a floating sidebar pane; one bone-white ink, capsule controls of one height, colour only for state (running, low, critical) and for each profile's badge. Every page shares one content column and one header, body and footer grid.
 - Profile cards: the app icon carries the profile's colour badge; plan and ⌘-number sit beside the title; the facts line up with the limit columns; the main action is a glass capsule (**Launch** or **Show window**), the others are round icon buttons with tooltips (Folder, Restart, Close, More). A failed start shows a warning button instead of a text link.
-- Limits: remaining time windows are drawn as thin capsule meters in neutral ink, turning amber below 25 % and red below 10 %.
+- Limits: what is left in each window is a thin capsule meter in neutral ink that turns amber below 25 % and red below 10 %; with three windows (Claude) a card shows the numbers alone.
 - Shared settings, Projects and About are grouped lists with equal trailing buttons; page actions sit on the title line or in the footer.
 - The side panel floats 12 pt off the screen edge with all corners rounded; rows show a status light and the limit on the status line; the four tools form one toolbar.
 - New app icon: the side panel on graphite glass.
 - The profile colours are sky, sage, sand, clay, rose and teal (clay replaces violet).
 - The minimum window width is 1120 pt so that Russian labels fit.
+- README and user guide rewritten for the new interface, with new screenshots of the main window, the side panel, Shared settings and the Russian interface.
 
 ## 0.10.0
 
