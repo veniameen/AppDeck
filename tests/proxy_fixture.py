@@ -148,6 +148,13 @@ class Target(http.server.BaseHTTPRequestHandler):
 class Web(http.server.ThreadingHTTPServer):
     request_queue_size = 128
 
+    def server_bind(self):
+        # HTTPServer.server_bind asks socket.getfqdn(), a reverse DNS lookup that can stall for a long
+        # time on CI machines; the fixture only needs the loopback address.
+        socketserver.TCPServer.server_bind(self)
+        host, port = self.server_address[:2]
+        self.server_name, self.server_port = host, port
+
 
 class Web6(Web):
     address_family = socket.AF_INET6

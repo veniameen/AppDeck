@@ -26,10 +26,10 @@ DCURL=(curl -s --max-time 10 --noproxy '*')
 
 python3 tests/proxy_fixture.py "$WORK" > "$WORK/ports" 2> "$WORK/fixture.log" &
 PIDS+=($!)
-for _ in $(seq 100); do grep -q '^dead ' "$WORK/ports" 2>/dev/null && break; sleep 0.1; done
+for _ in $(seq 600); do grep -q '^dead ' "$WORK/ports" 2>/dev/null && break; sleep 0.1; done # up to 60 s on a slow CI machine
 port(){ awk -v k="$1" '$1==k{print $2}' "$WORK/ports"; }
 T=$(port target); T6=$(port target6); H=$(port http); S=$(port socks); SILENT=$(port silent); DEAD=$(port dead); HANGUP=$(port hangup)
-[[ -n "$T" && -n "$DEAD" ]] || { cat "$WORK/fixture.log"; echo "FAIL: the proxy fixture did not start"; exit 1; }
+[[ -n "$T" && -n "$DEAD" ]] || { cat "$WORK/fixture.log"; cat "$WORK/ports"; python3 --version; echo "FAIL: the proxy fixture did not start"; exit 1; }
 BODY='appdeck-proxy-target'
 seen(){ "${DCURL[@]}" "http://127.0.0.1:$T/stats" | python3 -c 'import json,sys;print(json.load(sys.stdin).get(sys.argv[1],0))' "$1"; }
 sleep 600 & KEEP=$!; PIDS+=("$KEEP") # the process every long-running bridge watches
