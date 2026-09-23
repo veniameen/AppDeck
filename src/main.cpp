@@ -487,23 +487,22 @@ void chooseApplication(Obj,Sel,Obj){
  if(detected==deck::Adapter::Unsupported&&!codexCandidate){showError(str(T("No adapter for this .app","Для этого .app нет адаптера")),str(T("This version supports profiles for Codex, Claude Desktop, VS Code/Cursor and Chromium. Other Electron apps have an experimental mode. Copying an arbitrary native .app does not separate its accounts.","Эта версия поддерживает профили Codex, VS Code/Cursor и Chromium. Для прочих Electron-приложений доступен экспериментальный режим. Копирование произвольного нативного .app не разделяет его аккаунты.")));return;}
  Obj a=make("NSAlert");send<void>(a,"setMessageText:",cat(str(T("Add ","Добавить ")),name));
  send<void>(a,"setInformativeText:",str(T("The original .app is not modified. AppDeck creates profile folders, not copies of the program: each profile has its own sign-in. With the Codex adapter, tokens are kept in auth.json inside the private profile folder, not in the Keychain. Claude Desktop gets its own data folder through its CLAUDE_USER_DATA_DIR variable; the settings and history of its Code tab (~/.claude) stay shared. Check compatibility with your app version.","Исходное .app не изменяется. Создаются папки профилей, а не копии программы: у каждого профиля свой вход. В адаптере Codex токены хранятся в auth.json внутри закрытой папки профиля, а не в Keychain. Claude Desktop получает свою папку данных через штатную переменную CLAUDE_USER_DATA_DIR; настройки и история вкладки Code (~/.claude) остаются общими. Совместимость нужно проверить в вашей версии приложения.")));
- Obj accessory=send(send((Obj)deckViewClass,"alloc"),"initWithFrame:",rect(0,0,430,143));
+ Obj accessory=send(send((Obj)deckViewClass,"alloc"),"initWithFrame:",rect(0,0,430,104));
  label(accessory,T("Adapter","Адаптер"),rect(0,6,115,20));
- const char* choices[]={T("Codex (experimental)","Codex (экспериментальный)"),"VS Code / Cursor","Chromium / Chrome / Edge",T("Electron (experimental)","Electron (экспериментальный)"),"Claude Desktop"};
+ const char* choices[]={"Codex","VS Code / Cursor","Chromium / Chrome / Edge",T("Electron (experimental)","Electron (экспериментальный)"),"Claude Desktop"};
  Int index=codexCandidate?0:detected==deck::Adapter::VSCode?1:detected==deck::Adapter::Chromium?2:detected==deck::Adapter::Claude?4:3;
  Obj selector=popup(accessory,rect(120,0,305,28),choices,5,index);
- Obj current=checkbox(accessory,T("Add the existing sign-in (current window) as the primary profile","Добавить уже установленный вход (текущее окно) как основной профиль"),rect(0,112,428,22),index!=0);send<void>(current,"setEnabled:",index!=0);
+ // No profile count here: profiles are added one by one with “New profile”, as many as needed.
+ label(accessory,T("Then add a profile per account with “New profile” and sign in separately in each window.","Затем добавьте по профилю на каждый аккаунт кнопкой «Новый профиль» и войдите отдельно в каждом окне."),rect(0,38,428,34),12,muted());
+ Obj current=checkbox(accessory,T("Add the existing sign-in (current window) as the primary profile","Добавить уже установленный вход (текущее окно) как основной профиль"),rect(0,80,428,22),index!=0);send<void>(current,"setEnabled:",index!=0);
  send<void>(current,"setToolTip:",str(T("The primary profile is the app itself with its usual data. For Codex it is added when you connect the base workspace.","Основной профиль — это само приложение с его обычными данными. Для Codex он добавляется при подключении базовой среды.")));
- label(accessory,T("Profiles","Профилей"),rect(0,43,110,20));const char* nums[]={"1","2","4"};Obj number=popup(accessory,rect(120,36,95,28),nums,3,codexCandidate?2:0);
- label(accessory,T("Sign in separately in each instance.","Вход выполните отдельно в каждом экземпляре."),rect(0,83,425,22),12,muted());
  send<void>(a,"setAccessoryView:",accessory);send(a,"addButtonWithTitle:",str(T("Add","Добавить")));send(a,"addButtonWithTitle:",str(T("Cancel","Отмена")));
  if(send<Int>(a,"runModal")==1000){
   const char* adapters[]={"codex","vscode","chromium","electron","claude"};Int idx=send<Int>(selector,"indexOfSelectedItem");if(idx<0||idx>4)idx=3;
   Obj item=dict();put(item,"id",uuid());put(item,"name",name);put(item,"path",path);put(item,"bundleId",bid?bid:str(""));put(item,"adapter",str(adapters[idx]));
   if(!ensureShared(item)){showError(str(T("No access to the data folder","Нет доступа к папке данных")),str(T("Could not create the shared settings.","Не удалось создать общие настройки.")));drop(accessory);drop(a);return;}
-  add(apps,item);drop(selected);selected=keep(get(item,"id"));Int k=send<Int>(number,"indexOfSelectedItem");Int n=k==2?4:k==1?2:1;
+  add(apps,item);drop(selected);selected=keep(get(item,"id"));
   if(idx!=0&&send<Int>(current,"state")==1){Obj original=newProfile(item,str(T("Primary · current","Основной · текущий")),0,false);put(original,"master",boolean(true));}
-  const char* names[]={T("Work","Рабочий"),T("Personal","Личный"),T("Account 3","Аккаунт 3"),T("Account 4","Аккаунт 4")};for(Int i=0;i<n;++i)newProfile(item,str(names[i]),i+1,idx==0);
   page=0;save();buildUI();buildMenus();note("Application registered; no application bundle was modified.");
   if(idx==0)connectBaseAction(nullptr,nullptr,nullptr);
  }
