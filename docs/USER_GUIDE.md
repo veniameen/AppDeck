@@ -23,10 +23,10 @@ AppDeck runs several accounts of the same desktop app side by side on macOS — 
 
 ![The main window: four Codex profiles with their accounts and usage limits](images/main-window.png)
 
-1. **Add an app.** Click **＋ Add app** in the sidebar and choose an installed app. AppDeck detects the adapter: Codex (`ChatGPT.app`), Claude Desktop, VS Code / Cursor, Chrome / Brave / Edge / Chromium, or an experimental mode for other Electron apps. The original `.app` is never copied or modified.
+1. **Add an app.** Click **Add app** in the sidebar and choose an installed app. AppDeck detects the adapter: Codex (`ChatGPT.app`), Claude Desktop, VS Code / Cursor, Chrome / Brave / Edge / Chromium, or an experimental mode for other Electron apps. The original `.app` is never copied or modified.
 2. **Create profiles.** Each profile is an ordinary macOS window of that app with its own private data folder and therefore its own sign-in. Use **New profile** for more.
 3. **Launch and sign in.** Click **Launch** on a card and sign in inside the app window. Sign in to one new account at a time.
-4. **Switch.** Click a card, press **⌘1–9** while AppDeck is active, or open the [side panel](#the-side-panel) with **⌃⌥Space** from anywhere.
+4. **Switch.** Click **Show window** on a card, press **⌘1–9** while AppDeck is active, or open the [side panel](#the-side-panel) with **⌃⌥Space** from anywhere.
 
 A running profile's card offers **Show window** (bring it forward) and two round buttons: **Restart** ↻ (quit, then launch again once the process has really exited) and **Close** ✕ (a normal quit request — never a force kill). A stopped card has **Launch**, the profile folder and, after a failed start, a warning button that explains what happened. Every round button names itself in its tooltip. If a window was closed with the red button, AppDeck reopens it: it sends the same *reopen* event the Dock icon sends, addressed to that very process.
 
@@ -110,7 +110,7 @@ Turn it on once per Codex group: with **Account limits…** at the bottom of the
 
 **How often.** Strictly one profile at a time. Automatically at most once an hour per account and at least five minutes between two automatic checks of any profiles — no event-driven extra checks. Manually with **Limits ↻** or a click on a card's limit strip: immediately, at most once every 20 seconds per account.
 
-**Reading it.** “WEEK — 37 % left”, a bar and “resets Sat 11:10”: green from 25 %, yellow 10–24 %, red below 10 %, “used up” at 0 %. Windows are identified by duration, not by name. Grey numbers with “data from …” are the last good answer when a fresh one failed; a window whose reset time has passed shows “window reset” until it is checked again. **Not signed in** means the profile has never been launched or was signed out.
+**Reading it.** “WEEK — 37% left”, a thin meter and “resets Sat 11:10”. The number and the meter stay in the neutral ink from 25 %, turn amber at 10–24 % and red below 10 %; “used up” at 0 %. With three windows (Claude) a card shows only the numbers, to keep the three columns readable. Windows are identified by duration, not by name. Grey numbers with “data from …” are the last good answer when a fresh one failed; a window whose reset time has passed shows “window reset” until it is checked again. **Not signed in** means the profile has never been launched or was signed out.
 
 **One account in two profiles.** If two profiles of a group are signed in to the same account, the address is marked with ⚠: their limit is one and the same. Sign out in that window and sign in with the right account (in the browser, use a private window or sign out of ChatGPT first).
 
@@ -156,7 +156,7 @@ At most **six rows** are visible (fewer on a short screen); further profiles scr
 | Drag a row | Change the order. A movement under 4 points is still a click. |
 | Scroll over the list | Show the profiles below the first six. |
 | Right-click a row | Open / launch, restart, close the instance, refresh its limit, move up / down / to top. |
-| **↻ Limits** | Check the limits of every profile now (shown when limits are on). |
+| **Limits** | Check the limits of every profile now (shown when limits are on). |
 | ⌃⌥1 … ⌃⌥8 | Switch to the profile in that place of the list, even when it is scrolled out of view. |
 | **2×2** | Arrange the first four running profiles in panel order on this screen, then hide the panel. |
 | **Hide** | Hide the windows of all profiles (no quit, no kill). |
