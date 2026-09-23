@@ -1,3 +1,3 @@
 /* Russian Info.plist strings. The English originals are in assets/Info.plist. */
 NSAppleEventsUsageDescription = "AppDeck просит окно профиля открыться заново — то же событие, что отправляет значок в Dock.";
-NSHumanReadableCopyright = "© 2026 участники AppDeck · лицензия MIT";
+NSHumanReadableCopyright = "© 2026 Veniamin Ryadnov · лицензия MIT";

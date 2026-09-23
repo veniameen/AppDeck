@@ -36,7 +36,7 @@
 	<key>NSHighResolutionCapable</key>
 	<true/>
 	<key>NSHumanReadableCopyright</key>
-	<string>© 2026 AppDeck contributors · MIT License</string>
+	<string>© 2026 Veniamin Ryadnov · MIT License</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
 </dict>
