@@ -27,9 +27,10 @@ AppDeck is a small native macOS app for people who work in the same desktop app 
 - **Separate sign-ins, shared work.** Each profile gets its own private data folder, so every window stays signed in to its own account. For Codex you can share settings, chat history, projects and automations between the accounts — without copying a single database or token.
 - **Usage limits at a glance.** The weekly, 5-hour and per-model windows of every Codex and Claude account, asked from the apps' own tools. Meters stay neutral while there is room, turn amber below 25 % and red below 10 %; the account with the most headroom stands out in the side panel.
 - **Side panel.** Press <kbd>⌃</kbd><kbd>⌥</kbd><kbd>Space</kbd> in any app and switch accounts without opening the main window.
+- **Proxy per profile.** Start any profile through an HTTP or SOCKS5 proxy with a login and password — for example past the VPN of your router. Set a default for all profiles or choose one per profile; a private local bridge adds the credentials, fails over along your address list and keeps QUIC and WebRTC inside the proxy.
 - **Window tools.** Arrange four windows in a 2×2 grid and put them back, hide every profile at once, reopen a window that was closed with the red button.
 - **Graphite glass.** A dark translucent interface in the manner of macOS 26: a floating sidebar, one bone-white ink, capsule controls of one height, colour only for state and for each profile's badge.
-- **Native and light.** One C++17 translation unit on public AppKit and Objective-C runtime APIs. No Electron, no WebView, no network client, no telemetry. A universal binary for macOS 13 and later.
+- **Native and light.** A C++17 app on public AppKit and Objective-C runtime APIs, plus a tiny libSystem-only proxy bridge. No Electron, no WebView, no network client of its own, no telemetry. A universal binary for macOS 13 and later.
 - **English and Russian.** The interface follows your macOS language.
 
 ## The side panel
@@ -107,7 +108,8 @@ The shortcuts are registered hot keys: no Input Monitoring permission is needed.
 ## Privacy and safety
 
 - AppDeck never copies, links or edits the managed apps' databases and never reads or shares `auth.json`, cookies or Keychain items. Sign-ins stay in each profile's private folder.
-- It has no network client. Codex limits come from the app's own `codex app-server` (`account/read`, `account/rateLimits/read`); Claude limits from Claude Code's `get_usage` request in `--safe-mode`, which sends no message to the model. AppDeck never sees a token.
+- It has no network client of its own. Codex limits come from the app's own `codex app-server` (`account/read`, `account/rateLimits/read`); Claude limits from Claude Code's `get_usage` request in `--safe-mode`, which sends no message to the model. AppDeck never sees a token.
+- A proxy is opt-in: its passwords stay in a private file (mode 0600) and reach the local bridge through a pipe; the bridge listens on `127.0.0.1` only and exits with the window it serves.
 - Limits are asked rarely: each account at most once an hour, with at least five minutes between two accounts; **Limits** asks now.
 - Everything it keeps is in `~/Library/Application Support/AppDeck`. Diagnostics contain no tokens, configuration contents or account addresses.
 - Profiles are separated by data, not sandboxed: every app still runs as your macOS user. See [SECURITY.md](SECURITY.md).

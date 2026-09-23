@@ -13,6 +13,7 @@ AppDeck runs several accounts of the same desktop app side by side on macOS — 
 - [Claude Desktop](#claude-desktop)
 - [Claude limits](#claude-limits)
 - [The side panel](#the-side-panel)
+- [Proxy](#proxy)
 - [Window layout and permissions](#window-layout-and-permissions)
 - [Signing in to several accounts](#signing-in-to-several-accounts)
 - [Initial project list (experimental)](#initial-project-list-experimental)
@@ -165,6 +166,18 @@ At most **six rows** are visible (fewer on a short screen); further profiles scr
 | **×** / ⌃⌥Space | Hide the panel. The menu bar item stays. |
 
 Global shortcuts are registered hot keys, not an input tap, so no Input Monitoring permission is needed. Another utility may already own a combination; the menu bar item always works.
+
+## Proxy
+
+Some networks reach OpenAI or Anthropic only through a proxy — for example when the router sends everything through a VPN. AppDeck can start any profile through an **HTTP (CONNECT)** or **SOCKS5** proxy with a login and a password.
+
+1. Open **Proxy** in the sidebar and click **Add proxy**. Give it a name, choose the type and paste the addresses your provider gave you, one per line: `host:port` or `host:port:login:password` (the password may contain `:`). A login and password below the list apply to the addresses that have none of their own.
+2. **Check** opens a tunnel to `api.openai.com:443` through every address — no data is sent — and shows how many answer and how fast.
+3. Choose the **Default proxy** for all profiles, or give a profile its own choice in its card's **•••** menu → **Proxy**: *Default*, *No proxy* or a specific proxy. The card's status line shows it: “Not running · via Office”.
+
+When a profile with a proxy starts, AppDeck starts a small private bridge for that window (`appdeck-proxy`, part of AppDeck): it listens on `127.0.0.1` only, takes the first address that answers and adds the login and password, which Chromium-based apps cannot send themselves. The app is started with `--proxy-server` pointing at the bridge, `--disable-quic`, a WebRTC policy that keeps UDP inside the proxy, and `HTTPS_PROXY`/`ALL_PROXY`/`NO_PROXY` plus `NODE_USE_ENV_PROXY=1` for its Node and command-line helpers. The bridge keeps running while the window runs — even if you quit AppDeck — and exits with it. Limit checks of that profile go through the same proxy.
+
+Changes apply when a profile starts; a running window keeps its connection until it is restarted. Passwords are kept in `proxies.plist` (mode 0600) in AppDeck's data folder, never in `state.plist` or the diagnostics, and reach each bridge through a pipe, never on a command line.
 
 ## Window layout and permissions
 

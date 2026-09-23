@@ -1,11 +1,11 @@
 # Architecture
 
-AppDeck is one C++17 translation unit (`src/main.cpp`) that includes its implementation headers, plus a few pure C++ policy headers that the portable tests compile on their own.
+AppDeck is one C++17 translation unit (`src/main.cpp`) that includes its implementation headers, plus a few pure C++ policy headers that the portable tests compile on their own, and a small helper executable, `appdeck-proxy` (`src/proxy_bridge.cpp`, libSystem only), for profiles behind a proxy.
 
 | File | Responsibility |
 |---|---|
 | `mac.hpp` | The small public Objective-C runtime / AppKit ABI bridge (`send<>`, x86_64 `stret`, alignment constants). |
-| `core.hpp`, `edge_policy.hpp`, `usage_policy.hpp`, `workspace_filter.hpp`, `project_sync.hpp`, `automation_sync.hpp` | Pure policies: adapters, config editing, geometry and scrolling, limit cadence, allow-lists, project and automation reconciliation. Unit-tested. |
+| `core.hpp`, `edge_policy.hpp`, `usage_policy.hpp`, `proxy_policy.hpp`, `workspace_filter.hpp`, `project_sync.hpp`, `automation_sync.hpp` | Pure policies: adapters, config editing, geometry and scrolling, limit cadence, proxy lines and protocols, allow-lists, project and automation reconciliation. Unit-tested. |
 | `main.cpp` | App registry, persistence, launch adapters, main window, menus, localization. |
 | `edge_panel.hpp` | The side panel: list, scrolling, drag-to-reorder, animation, global hot keys. |
 | `window_control.hpp`, `ax_api.hpp` | Reopen, focus, 2×2 grid and restore through Accessibility. |
@@ -13,12 +13,14 @@ AppDeck is one C++17 translation unit (`src/main.cpp`) that includes its impleme
 | `workspace_base.hpp`, `workspace_actions.hpp` | Connecting the base Codex workspace, shared history links. |
 | `group_sync.hpp`, `project_server_sync.hpp` | Group journal, file application and Codex's own project API. |
 | `usage_parse.hpp`, `usage_probe.hpp`, `usage_limits.hpp`, `usage_views.hpp` | Account limits: reply parsing, state-free probes, scheduling and cache, views. |
+| `proxy_store.hpp`, `proxy_views.hpp` | Proxies: the list, the default and per-profile choice, bridges for windows and limit probes, the Proxy page. |
+| `proxy_bridge.cpp` | The `appdeck-proxy` helper: a loopback HTTP proxy that forwards through the configured HTTP or SOCKS5 upstream. |
 | `edge_selftest.hpp` | Acceptance aid that replays side panel gestures in a sandbox. |
 
 
 ## Runtime
 
-C++17, public Objective-C runtime bridge, AppKit views. No Electron, Qt, WebView, screen-capture pipeline, child-process window embedding, private WindowServer APIs, app-bundle patching, telemetry or network client. The managed Codex processes remain independent ordinary macOS applications.
+C++17, public Objective-C runtime bridge, AppKit views. No Electron, Qt, WebView, screen-capture pipeline, child-process window embedding, private WindowServer APIs, app-bundle patching, telemetry or network client of its own (the proxy bridge only relays the traffic of profiles the owner routed through a proxy). The managed Codex processes remain independent ordinary macOS applications.
 
 `main.cpp` owns the app registry, schema-2 persistence, NSWorkspace launch adapter and main UI. All controls share one button system (`styledButton`): borderless layer-backed NSButton subclasses whose style name (`primary`, `prominent`, `secondary`, `danger`, `overlay`) lives in the view identifier, drawn as capsules, with hover through an always-active tracking area; only the dock subclass accepts the first mouse click. The visual tokens ("Graphite glass") sit next to it: `ink`/`muted`/`faint`/`dim` text colours, `fill(alpha)` glass surfaces, `liveColor`/`warnColor`/`dangerColor` for state and six identity colours for the profile badges; colour is used for nothing else. Pages share one content column (264 pt from the left, 32 pt from the right edge) and one header, body and footer grid. Implementation headers are included in its anonymous namespace, so the whole app is one translation unit with no Xcode project. `mac.hpp` declares the small public ABI bridge (including x86_64 NSRect stret handling) instead of relying on Objective-C++.
 
@@ -111,6 +113,12 @@ Claude profiles use the same scheduler, cache and views through a second probe. 
 Cadence since 0.7.2 is one rule (`usage_policy.hpp`, simulated for a whole day in `usage_test`): an account at most once per hour whatever the state of its profile, and automatic probes of any two profiles at least five minutes apart (`usageLastProbe`, set only when a helper process is really started); there are no event-driven automatic probes (launch, stop, window reset and sign-in wait probes were removed in 0.7.2). A manual refresh is immediate with a 20 s floor per account. A window whose reset time has passed is drawn grey until the next probe. Only display data is cached on the profile (`usage`): percentages, reset times, plan, reached-type and the account e-mail as a label; it is sanitised on load, removed when the feature is switched off and never exported by diagnostics. On failure the last good numbers stay visible, marked stale, unless the account itself is gone (`auth`, `apikey`). `usage_views.hpp` creates the card strip and dock indicators once and updates them in place, so an answer never rebuilds the window or resets a scroll position.
 
 `mac.hpp` carries per-architecture `alignRight`/`alignCenter`: AppKit's NSTextAlignment uses the iOS numbering everywhere except x86_64 macOS (0.2/0.3 hard-coded 1 for "centre", which is "right" on Intel).
+
+## Proxy
+
+`proxy_policy.hpp` is pure and unit-tested (`proxy_test`): the endpoint lines (`host:port[:login:password]`, IPv6 in brackets), Basic credentials, the CONNECT request, the request line of an app (CONNECT or absolute-form `http://`), header rewriting and the SOCKS5 messages of RFC 1928/1929. `proxy_store.hpp` keeps the owner's proxies in `proxies.plist` (0600; never in `state.plist`, menus or diagnostics), the default (`state.defaultProxy`) and a profile's choice (`profile.proxy`: absent = default, `none`, or a proxy id). `proxy_views.hpp` is the Proxy page, its editor and the choice menus.
+
+Chromium and Electron accept `--proxy-server` but cannot answer a proxy's authentication challenge, so a profile behind a proxy gets its own bridge: the helper executable `Contents/MacOS/appdeck-proxy` (`proxy_bridge.cpp`, its own translation unit, libSystem only). AppDeck writes the configuration to the helper's stdin (credentials hex-encoded; never argv or the environment), the helper binds `127.0.0.1:0` and answers `port N`, the app is launched with `--proxy-server=http://127.0.0.1:N`, `--proxy-bypass-list=localhost;127.0.0.1;[::1]`, `--disable-quic`, `--force-webrtc-ip-handling-policy=disable_non_proxied_udp` and the `*_PROXY`/`NODE_USE_ENV_PROXY` environment, and AppDeck then sends `watch <pid>`. The helper serves each connection on its own thread (CONNECT tunnels and absolute-form HTTP through an HTTP or SOCKS5 upstream, failing over along the address list) and exits when the watched process exits, so it outlives the manager like the window does. Limit probes of such a profile use one bridge per proxy that watches AppDeck itself. `appdeck-proxy check` proves each address with a tunnel to `api.openai.com:443` without speaking TLS.
 
 ## Localization
 

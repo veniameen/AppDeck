@@ -22,6 +22,10 @@ Never call AXIsProcessTrustedWithOptions with a dictionary that lacks kAXTrusted
 
 The `profiles` array in state.plist is the user's order: the side panel, Control-Option-1…8, the menu bar menu and (per app) the main window follow it. Never re-sort it; change it only through `moveProfileNextTo`/`moveProfileInList`. The one-time 0.9 migration (`profileOrder` flag) adopted the earlier app-grouped order. The panel shows at most six rows and scrolls; at rest it has no shade (`deck::edgeCut`): keep the default look clean. `APPDECK_DOCK_SELFTEST` works only together with `APPDECK_DATA_ROOT`; run it for both architectures and both languages after touching the panel (`APPDECK_GUI_SELFTEST=1 make verify`).
 
+## Proxies
+
+Proxy credentials live only in `proxies.plist` (0600) and in memory; never put them in `state.plist`, argv, the environment, logs or diagnostics (counts only). The bridge `appdeck-proxy` binds 127.0.0.1 only, gets its configuration on stdin, never speaks TLS itself, and exits with the process it watches. The endpoint and protocol rules stay in `proxy_policy.hpp` with tests in `tests/proxy_test.cpp`; do not weaken the loopback bypass, `--disable-quic` or the WebRTC policy (they keep traffic inside the proxy).
+
 ## Localization
 
 The interface is English and Russian; documentation, comments and commit messages are English. Write every user-visible string as `T("English", "Русский")` at its point of use; keep printf conversions identical in both halves. `make test` runs `tools/check_i18n.py`, which rejects Cyrillic outside a `T()` pair. Check new screens in both languages (`-AppleLanguages '(ru)'`).
