@@ -23,6 +23,9 @@ jobs:
       - name: Static bundle check (both slices, system imports only, signature)
         run: python3 tools/verify_bundle.py build/AppDeck.app
 
+      - name: Proxy bridge against offline loopback fixtures
+        run: tests/proxy_bridge_test.sh "$PWD/build/AppDeck.app"
+
       - name: Package
         run: ditto -c -k --keepParent build/AppDeck.app build/AppDeck.zip
 

@@ -16,6 +16,12 @@ xcrun clang++ -std=c++17 -O2 -fno-exceptions -fno-rtti -fstack-protector-strong 
   -arch arm64 -arch x86_64 src/main.cpp -framework AppKit -lobjc \
   -o "$APP/Contents/MacOS/AppDeck"
 
+# The local proxy bridge: a separate executable that links libSystem only (no AppKit, no C++ runtime).
+# It is signed on its own first; the bundle signature then seals it as nested code.
+xcrun clang++ -std=c++17 -O2 -fno-exceptions -fno-rtti -fstack-protector-strong -nostdlib++ \
+  -Wall -Wextra -Werror -mmacosx-version-min=13.0 -arch arm64 -arch x86_64 \
+  src/proxy_bridge.cpp -o "$APP/Contents/MacOS/appdeck-proxy"
+
 cp assets/Info.plist "$APP/Contents/Info.plist"
 printf 'APPL????' > "$APP/Contents/PkgInfo"
 cp assets/AppDeck.icns "$APP/Contents/Resources/"
@@ -24,6 +30,7 @@ cp assets/AppDeck.icns "$APP/Contents/Resources/"
 python3 tools/make_help.py "$APP/Contents/Resources" >/dev/null
 cp -R assets/en.lproj assets/ru.lproj "$APP/Contents/Resources/"
 
+/usr/bin/codesign --force --sign - --identifier local.appdeck.proxy "$APP/Contents/MacOS/appdeck-proxy"
 /usr/bin/codesign --force --sign - "$APP"
 /usr/bin/codesign --verify --deep --strict "$APP"
 echo "Built $APP ($(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Contents/Info.plist"), $(lipo -archs "$APP/Contents/MacOS/AppDeck"))"

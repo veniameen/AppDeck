@@ -16,6 +16,10 @@ scripts/test.sh
 # The binary imports only system libraries and carries a complete ad-hoc signature (both slices).
 python3 tools/verify_bundle.py "$APP"
 
+# The proxy bridge helper against offline loopback fixtures: HTTP and SOCKS5 upstreams with a login,
+# failover, check results, lifecycle and the loopback-only listener.
+tests/proxy_bridge_test.sh "$APP"
+
 # Production project adapter and group synchronizer against isolated profiles. These tests never
 # sign in, send a model turn or open a real profile database.
 for t in project_server_sync_test group_sync_test; do
