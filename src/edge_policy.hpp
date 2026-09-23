@@ -48,14 +48,16 @@ inline double edgeAutoScroll(double y,double height,double band=30,double fastes
  if(y>height-band)return fastest*clamp((y-(height-band))/band,0,1);
  return 0;
 }
-// Flush with the right border of the visible frame, vertically centred, never outside it.
+// Floating edgeMargin off the right border of the visible frame, vertically centred, never outside it
+// (on a screen too narrow for the margin the panel moves back to the border).
+constexpr double edgeMargin=12;
 inline Box edgeBounds(Box s,double w=edgeWidth,double h=edgeHeight(4)){
- w=clamp(w,1,s.w>1?s.w:1);h=clamp(h,1,s.h>24?s.h-24:(s.h>1?s.h:1));
- return {s.x+s.w-w,s.y+(s.h-h)/2,w,h};
+ w=clamp(w,1,s.w>1?s.w:1);h=clamp(h,1,s.h>24?s.h-24:(s.h>1?s.h:1));double m=clamp(edgeMargin,0,s.w-w);
+ return {s.x+s.w-w-m,s.y+(s.h-h)/2,w,h};
 }
 inline Box edgeFrame(Box full,double progress,bool reduceMotion){
  if(reduceMotion)return full;
- // The dock slides out of the screen border: only its width grows, the right side stays put,
+ // The panel unfolds from its right side: only its width grows, the right side stays put,
  // so the window never reaches onto a neighbouring display.
  double w=clamp(full.w*bloom(progress),1,full.w);
  return {full.x+full.w-w,full.y,w,full.h};

@@ -5,8 +5,8 @@ Class edgePanelClass=nullptr,edgeRowButtonClass=nullptr;
 bool edgeWanted=false,edgeRebuild=true,edgeReducedMotion=false;
 double edgeProgress=0,edgeLastTime=0;
 Rect edgeFullFrame{};
-Obj edgeMuted(){return color(.70,.73,.79);}
-constexpr double edgeCorner=18;
+Obj edgeMuted(){return muted();}
+constexpr double edgeCorner=22;
 // The dock lists every profile of every app in the user's order (dockProfiles). At most six rows are
 // visible, fewer on a short screen (edge_policy.hpp); the rest of the list scrolls.
 Int edgeRowsNow=4;
@@ -17,16 +17,23 @@ double edgeScrollY=0;bool edgeScrollHome=false,edgeDragging=false,edgeFadeTopFir
 constexpr double edgeFadeLength=16,edgeFadeFloor=.22;
 Obj edgeTargetScreen(){return edgeWanted&&edgeScreen?edgeScreen:pointerScreen();}
 bool neverKey(Obj,Sel){return false;}
-Obj edgeButton(Obj parent,const char* title,const char* action,Rect frame,Int tag=-1,bool overlay=false){
- return styledButton(edgeButtonClass,parent,title,action,frame,tag,overlay?"overlay":"edge",overlay?14.0:10.0,12);
+Obj edgeButton(Obj parent,const char* title,const char* action,Rect frame,Int tag=-1,bool overlay=false,const char* icon=nullptr){
+ return styledButton(edgeButtonClass,parent,title,action,frame,tag,overlay?"overlay":"secondary",overlay?14.0:frame.size.height/2,11.5,icon);
 }
-// Glyph above caption, composed by hand: NSButton's own image/title layout lets them collide at this size.
+// One cell of the panel's toolbar: glyph above caption, composed by hand (NSButton's own image/title
+// layout lets them collide at this size), with a transparent hit area over the whole cell.
 Obj edgeAction(Obj parent,const char* glyph,const char* title,const char* tip,const char* action,Rect f){
- Obj tile=panel(parent,f,color(1,1,1,.065),10);double w=f.size.width;
- imageView(tile,symbol(glyph,14),rect((w-22)/2,7,22,19),ink());
- Obj caption=label(tile,title,rect(0,29,w,13),9.5,color(.80,.83,.88),.1);send<void>(caption,"setAlignment:",alignCenter);
- Obj b=styledButton(edgeButtonClass,tile,"",action,rect(0,0,w,f.size.height),-1,"overlay",10);
+ double w=f.size.width;imageView(parent,symbol(glyph,14),rect(f.origin.x+(w-18)/2,f.origin.y+9,18,18),ink());
+ Obj caption=label(parent,title,rect(f.origin.x,f.origin.y+30,w,14),10.5,muted(),.23);send<void>(caption,"setAlignment:",alignCenter);
+ Obj b=styledButton(edgeButtonClass,parent,"",action,f,-1,"overlay",14);
  send<void>(b,"setToolTip:",str(tip));send<void>(b,"setAccessibilityLabel:",str(tip));return b;
+}
+// A quiet line with its key names picked out: "⌃⌥Space panel · ⌃⌥1–6 profiles".
+Obj edgeHint(Obj parent,Rect f,const char* const* parts,UInt n){
+ Obj text=make("NSMutableAttributedString");Obj style=make("NSMutableParagraphStyle");send<void>(style,"setAlignment:",alignCenter);
+ for(UInt i=0;i<n;++i){bool key=i%2==0;Obj a=dict();put(a,"NSFont",send(cls("NSFont"),"systemFontOfSize:weight:",10.5,key?.3:0.0));put(a,"NSColor",key?muted():faint());put(a,"NSParagraphStyle",style);
+  Obj piece=send(send(cls("NSAttributedString"),"alloc"),"initWithString:attributes:",str(parts[i]),a);send<void>(text,"appendAttributedString:",piece);drop(piece);}
+ Obj v=label(parent,"",f,10.5,faint(),0);send<void>(v,"setAttributedStringValue:",text);drop(text);drop(style);return v;
 }
 Obj edgeClip(){return edgeScroll?send(edgeScroll,"contentView"):nullptr;}
 double edgeScrollOffset(){Obj clip=edgeClip();return clip?getRect(clip,"bounds").origin.y:0;}
@@ -58,32 +65,34 @@ void rebuildEdgeContent(){
  const double W=deck::edgeWidth,pad=12,rowW=W-pad*2,rowH=deck::edgeRowHeight,step=deck::edgeStep;
  Obj all=dockProfiles();Obj a=currentApp();UInt n=count(all),rows=n?n:1;bool anyLimits=false;
  for(UInt i=0;i<count(apps);++i)if(usageEnabled(at(apps,i)))anyLimits=true;
- label(edgeContent,"AppDeck",rect(pad+4,14,96,22),16,ink(),.4);
- if(anyLimits){Obj again=edgeButton(edgeContent,T("↻ Limits","↻ Лимиты"),"usageRefreshAll:",rect(W-pad-26-8-84,15,84,26));send<void>(again,"setFont:",send(cls("NSFont"),"systemFontOfSize:weight:",11.0,.23));
-  send<void>(send(again,"layer"),"setCornerRadius:",13.0);send<void>(again,"setToolTip:",str(T("Check the limits of all profiles now. On its own, AppDeck asks each account at most once an hour, with 5 minutes between profiles.","Проверить лимиты всех профилей сейчас. Сам AppDeck спрашивает каждый аккаунт не чаще раза в час, с паузой 5 минут между профилями.")));}
- Obj sub=cat(count(apps)>1?formatInt(T("%ld apps","%ld прил."),(Int)count(apps)):a?get(a,"name"):str(T("No apps","Нет приложений")),formatInt(n==1?T("  ·  %ld profile","  ·  %ld проф."):T("  ·  %ld profiles","  ·  %ld проф."),(Int)n));
- labelObj(edgeContent,sub,rect(pad+4,38,W-pad*2-40,16),11,edgeMuted());
- Obj closeButton=edgeButton(edgeContent,"×","toggleEdge:",rect(W-pad-26,15,26,26));send<void>(closeButton,"setToolTip:",str(T("Hide panel  ⌃⌥Space","Скрыть панель  ⌃⌥Space")));
- send<void>(closeButton,"setFont:",send(cls("NSFont"),"systemFontOfSize:weight:",15.0,.1));send<void>(send(closeButton,"layer"),"setCornerRadius:",13.0);
+ // Header: title and counts on the left edge, Limits and Close ending on the right edge.
+ kern(label(edgeContent,"AppDeck",rect(pad,14,120,20),15,ink(),.4),-.15);
+ Obj closeButton=edgeButton(edgeContent,"","toggleEdge:",rect(W-pad-26,18,26,26),-1,false,"xmark");send<void>(closeButton,"setToolTip:",str(T("Hide panel  ⌃⌥Space","Скрыть панель  ⌃⌥Space")));send<void>(closeButton,"setAccessibilityLabel:",str(T("Hide panel","Скрыть панель")));
+ double headerRight=W-pad-26-6;
+ if(anyLimits){const char* t=T("Limits","Лимиты");double bw=(double)(Int)(textWidth(t,11.5,.3)+42);Obj again=edgeButton(edgeContent,t,"usageRefreshAll:",rect(headerRight-bw,18,bw,26),-1,false,"arrow.clockwise");
+  send<void>(again,"setToolTip:",str(T("Check the limits of all profiles now. On its own, AppDeck asks each account at most once an hour, with 5 minutes between profiles.","Проверить лимиты всех профилей сейчас. Сам AppDeck спрашивает каждый аккаунт не чаще раза в час, с паузой 5 минут между профилями.")));headerRight-=bw+6;}
+ Obj sub=cat(count(apps)>1?formatInt(T("%ld apps","%ld прил."),(Int)count(apps)):a?get(a,"name"):str(T("No apps","Нет приложений")),formatInt(n==1?T(" · %ld profile"," · %ld проф."):T(" · %ld profiles"," · %ld проф."),(Int)n));
+ labelObj(edgeContent,sub,rect(pad,36,headerRight-pad-4,14),11,faint(),0);
  // One column in the user's order, top to bottom; the rows that do not fit scroll. A row's place is
  // also its shortcut (⌃⌥1…8). Drag a row, or use its menu, to change the order.
  double listH=deck::edgeListHeight((unsigned)edgeRowsNow);
- Obj scroll=send(send(cls("NSScrollView"),"alloc"),"initWithFrame:",rect(pad,66,rowW,listH));
+ Obj scroll=send(send(cls("NSScrollView"),"alloc"),"initWithFrame:",rect(pad,62,rowW,listH));
  send<void>(scroll,"setDrawsBackground:",false);send<void>(scroll,"setHasVerticalScroller:",true);send<void>(scroll,"setAutohidesScrollers:",true);
  send<void>(scroll,"setScrollerStyle:",(Int)1);send<void>(scroll,"setScrollerKnobStyle:",(Int)2);send<void>(scroll,"setHorizontalScrollElasticity:",(Int)1); // overlay, light knob
  send<void>(scroll,"setWantsLayer:",true);
  edgeList=send(send((Obj)deckViewClass,"alloc"),"initWithFrame:",rect(0,0,rowW,deck::edgeListHeight((unsigned)rows)));send<void>(scroll,"setDocumentView:",edgeList);drop(edgeList);
  send<void>(edgeContent,"addSubview:",scroll);drop(scroll);edgeScroll=scroll;
  for(UInt i=0;i<rows;++i){Rect frame=rect(0,i*step,rowW,rowH);
-  Obj c=panel(edgeList,frame,color(1,1,1,.055),14);Obj layer=send(c,"layer");send<void>(layer,"setBorderWidth:",1.0);send<void>(layer,"setBorderColor:",send(color(1,1,1,.075),"CGColor"));
+  Obj c=panel(edgeList,frame,surface(),14);Obj layer=send(c,"layer");send<void>(layer,"setBorderWidth:",1.0);send<void>(layer,"setBorderColor:",send(fill(0),"CGColor"));
   if(i<n){Obj p=at(all,i);bool hotkey=i<deck::edgeHotkeys;
-   panel(c,rect(0,15,3,rowH-30),accentFor(p),1.5);appIcon(c,get(appFor(p),"path"),rect(13,13,32,32));
-   labelObj(c,get(p,"name"),rect(55,10,rowW-55-40,20),13,ink(),.25);
-   bool limits=usageEnabled(appFor(p));
-   Obj st=label(c,T("○ Stopped","○ Остановлен"),rect(55,31,rowW-55-40-(limits?50:0),16),10.5,edgeMuted());Obj pct=nullptr,track=nullptr,fill=nullptr;
-   if(limits){pct=label(c,"",rect(rowW-40-52,31,50,16),10.5,edgeMuted(),.3);send<void>(pct,"setAlignment:",alignRight);
-    track=array();fill=array();for(UInt k=0;k<usageShown;++k){Obj t=panel(c,rect(55,51,10,3),color(1,1,1,.10),1.5);add(track,t);add(fill,panel(t,rect(0,0,0,3),ink(),1.5));}}
-   if(hotkey){Obj pill=panel(c,rect(rowW-32,19,20,20),color(1,1,1,.10),6);Obj key=labelObj(pill,formatInt("%ld",(Int)i+1),rect(0,3,20,14),10.5,edgeMuted(),.3);send<void>(key,"setAlignment:",alignCenter);}
+   // Identity: the app icon with the profile's colour as a badge; the place number as a key cap.
+   appIcon(c,get(appFor(p),"path"),rect(10,13,32,32));identityBadge(c,rect(10,13,32,32),accentFor(p),10,hex(0x2C2C2F));
+   bool limits=usageEnabled(appFor(p));double textRight=rowW-10-(hotkey?28:0);
+   labelObj(c,get(p,"name"),rect(52,10,textRight-52,18),13,ink(),.3);
+   Obj dot=statusDot(c,rect(52,33,6,6));Obj st=label(c,T("Stopped","Остановлен"),rect(63,28,rowW-63-10-(limits?46:0),15),11,muted(),.23);Obj pct=nullptr,track=nullptr,fillBars=nullptr;
+   if(limits){pct=label(c,"",rect(rowW-10-44,27,44,17),12,ink(),.3);send<void>(pct,"setFont:",monoFont(12,.3));send<void>(pct,"setAlignment:",alignRight); // on the status line, ending with the meters
+    track=array();fillBars=array();for(UInt k=0;k<usageShown;++k){Obj t=panel(c,rect(52,47,10,3),fill(.10),1.5);add(track,t);add(fillBars,panel(t,rect(0,0,0,3),ink(),1.5));}}
+   if(hotkey)keycap(c,utf8(formatInt("%ld",(Int)i+1)),rect(rowW-30,9,20,20),10.5);
    Obj b=styledButton(edgeRowButtonClass,c,"","edgeFocus:",rect(0,0,rowW,rowH),profileIndex(p),"overlay",14,10);
    Obj tip=cat(cat(get(p,"name"),hotkey?formatInt(T(" — launch or bring its window forward  ·  ⌃⌥%ld"," — запустить или поднять окно  ·  ⌃⌥%ld"),(Int)i+1):str(T(" — launch or bring its window forward"," — запустить или поднять окно"))),str(T("\nOrder: drag the row up or down","\nПорядок: перетащите строку выше или ниже")));
    send<void>(b,"setToolTip:",tip);send<void>(b,"setAccessibilityLabel:",cat(str(T("Open ","Открыть ")),get(p,"name")));
@@ -93,7 +102,7 @@ void rebuildEdgeContent(){
     if(limits){separator(menu);menuItem(menu,T("Refresh limit","Обновить лимит"),"usageRefresh:",tag);}
     separator(menu);send<void>(menuItem(menu,T("Move up","Переместить выше"),"edgeMoveUp:",tag),"setEnabled:",i>0);send<void>(menuItem(menu,T("Move down","Переместить ниже"),"edgeMoveDown:",tag),"setEnabled:",i+1<n);
     send<void>(menuItem(menu,T("Move to top","Переместить в начало"),"edgeMoveFirst:",tag),"setEnabled:",i>0);send<void>(b,"setMenu:",menu);drop(menu);}
-   Obj ref=dict();put(ref,"id",get(p,"id"));put(ref,"row",c);put(ref,"status",st);put(ref,"layer",layer);put(ref,"button",b);put(ref,"pct",pct);put(ref,"track",track);put(ref,"fill",fill);put(ref,"width",real(rowW-55-14));
+   Obj ref=dict();put(ref,"id",get(p,"id"));put(ref,"row",c);put(ref,"status",st);put(ref,"dot",dot);put(ref,"layer",layer);put(ref,"button",b);put(ref,"pct",pct);put(ref,"track",track);put(ref,"fill",fillBars);put(ref,"width",real(rowW-52-10));
    put(ref,"tip",tip);add(edgeRefs,ref);
   }else{Obj none=label(c,T("No profiles yet — add them in the AppDeck window","Профилей пока нет — добавьте их в окне AppDeck"),rect(14,12,rowW-28,34),11.5,edgeMuted());send<void>(none,"setAlignment:",alignCenter);
    Obj b=edgeButton(c,"","showWindow:",rect(0,0,rowW,rowH),-1,true);send<void>(b,"setAccessibilityLabel:",str(T("Open the AppDeck main window","Открыть главное окно AppDeck")));}
@@ -110,14 +119,18 @@ void rebuildEdgeContent(){
   edgeFadeTopFirst=send<bool>(edgeFade,"contentsAreFlipped");edgeUpdateFade();send<void>(cls("CATransaction"),"commit");
   send<void>(clip,"setPostsBoundsChangedNotifications:",true);
   send<void>(send(cls("NSNotificationCenter"),"defaultCenter"),"addObserver:selector:name:object:",controller,sel("edgeScrolled:"),str("NSViewBoundsDidChangeNotification"),clip);}
- double y=66+listH+10;
- const double gap=6,bw=(rowW-gap*3)/4;
- edgeAction(edgeContent,"square.grid.2x2","2×2",T("Arrange the first four running profiles of the list in a 2×2 grid","Разложить первые четыре запущенных профиля списка сеткой 2×2"),"tileWindows:",rect(pad,y,bw,48));
- edgeAction(edgeContent,"eye.slash",T("Hide","Скрыть"),T("Hide the windows of all profiles","Скрыть окна всех профилей группы"),"hideProfiles:",rect(pad+(bw+gap),y,bw,48));
- edgeAction(edgeContent,"arrow.uturn.backward",T("Restore","Вернуть"),T("Restore the window positions from before the layout","Вернуть расположение окон до раскладки"),"restoreWindows:",rect(pad+(bw+gap)*2,y,bw,48));
- edgeAction(edgeContent,"macwindow","AppDeck",T("Open the AppDeck main window","Открыть главное окно AppDeck"),"showWindow:",rect(pad+(bw+gap)*3,y,bw,48));
+ // Toolbar: one glass bar with four equal cells and hairline separators.
+ double y=62+listH+12;
+ Obj bar=card(edgeContent,rect(pad,y,rowW,52),14,fill(.05));double cell=(rowW-3)/4;
+ const char* glyphs[]={"square.grid.2x2","eye.slash","arrow.uturn.backward","macwindow"};
+ const char* titles[]={"2×2",T("Hide","Скрыть"),T("Restore","Вернуть"),"AppDeck"};
+ const char* tips[]={T("Arrange the first four running profiles of the list in a 2×2 grid","Разложить первые четыре запущенных профиля списка сеткой 2×2"),T("Hide the windows of all profiles","Скрыть окна всех профилей группы"),T("Restore the window positions from before the layout","Вернуть расположение окон до раскладки"),T("Open the AppDeck main window","Открыть главное окно AppDeck")};
+ const char* actions[]={"tileWindows:","hideProfiles:","restoreWindows:","showWindow:"};
+ for(int k=0;k<4;++k){double cx=k*(cell+1);if(k)panel(bar,rect(cx-1,12,1,28),hairline(),0);edgeAction(bar,glyphs[k],titles[k],tips[k],actions[k],rect(cx,0,cell,52));}
  Int keys=(Int)(n<deck::edgeHotkeys?n:deck::edgeHotkeys);
- Obj hint=labelObj(edgeContent,keys>1?formatInt(T("⌃⌥Space — panel  ·  ⌃⌥1–%ld — profiles","⌃⌥Space — панель  ·  ⌃⌥1–%ld — профили"),keys):str(T("⌃⌥Space — panel  ·  ⌃⌥1 — profile","⌃⌥Space — панель  ·  ⌃⌥1 — профиль")),rect(pad,y+56,rowW,16),10,edgeMuted());send<void>(hint,"setAlignment:",alignCenter);
+ char range1[24];snprintf(range1,sizeof range1,keys>1?"⌃⌥1–%ld":"⌃⌥1",keys);
+ const char* hint[]={"⌃⌥Space",T(" panel  ·  "," панель  ·  "),range1,keys>1?T(" profiles"," профили"):T(" profile"," профиль")};
+ edgeHint(edgeContent,rect(pad,y+64,rowW,15),hint,4);
  edgeRebuild=false;
 }
 void renderEdge();
@@ -127,19 +140,21 @@ void edgeRefresh(){
   if(before.size.height!=edgeFullFrame.size.height&&!edgeTimer)renderEdge();}
  for(UInt i=0;i<count(edgeRefs);++i){Obj ref=at(edgeRefs,i),p=nullptr;for(UInt j=0;j<count(profiles);++j)if(same(get(at(profiles,j),"id"),get(ref,"id"))){p=at(profiles,j);break;}
   if(!p){edgeRebuild=true;continue;}Obj r=running(p);bool front=r&&send<bool>(r,"isActive");bool hidden=r&&send<bool>(r,"isHidden");
-  send<void>(get(ref,"status"),"setStringValue:",restarting(p)?str(T("↻ Restarting…","↻ Перезапуск…")):front?str(T("● Active","● Активен")):hidden?str(T("◌ Hidden","◌ Скрыт")):r?str(T("● Running","● Запущен")):get(p,"lastError")?str(T("△ Failed to start","△ Не запустился")):str(T("○ Stopped","○ Остановлен")));
-  // One colour for "running" on every row; the accent bar keeps telling the accounts apart.
-  send<void>(get(ref,"status"),"setTextColor:",restarting(p)?color(.93,.72,.42):r?liveColor():get(p,"lastError")?color(.93,.72,.42):edgeMuted());
-  send<void>(get(ref,"layer"),"setBorderColor:",send(front?accentFor(p):color(1,1,1,.075),"CGColor"));
-  send<void>(get(ref,"layer"),"setBackgroundColor:",send(front?color(.28,.42,.64,.19):color(1,1,1,.055),"CGColor"));
+  bool problem=restarting(p)||(!r&&get(p,"lastError"));
+  send<void>(get(ref,"status"),"setStringValue:",str(restarting(p)?T("Restarting…","Перезапуск…"):front?T("Active","Активен"):hidden?T("Hidden","Скрыт"):r?T("Running","Запущен"):get(p,"lastError")?T("Failed to start","Не запустился"):T("Stopped","Остановлен")));
+  // The words stay quiet; the light carries the state: green running, amber trouble, an empty ring when stopped.
+  send<void>(get(ref,"status"),"setTextColor:",problem?warnColor():muted());
+  if(Obj dot=get(ref,"dot"))statusDotColor(dot,problem?warnColor():r&&!hidden?liveColor():r?muted():dim(),r&&!hidden,!r||hidden);
+  send<void>(get(ref,"layer"),"setBorderColor:",send(front?fill(.12):fill(0),"CGColor"));
+  send<void>(get(ref,"layer"),"setBackgroundColor:",send(front?fill(.10):surface(),"CGColor"));
   if(Obj pct=get(ref,"pct")){Obj w=usageTightest(p);bool stale=w&&get(usageOf(p),"error"),best=usageIsBest(p);int left=w?usageRemaining(w):0; // one number = the limit closest to its wall
-   send<void>(pct,"setStringValue:",w?formatInt("%ld %%",(Int)left):str(usageAsking(p)?"…":"—"));send<void>(pct,"setTextColor:",!w||stale?edgeMuted():usageColor(left));
-   // The account with the most weekly headroom is the one to switch to: make its number stand out.
-   send<void>(pct,"setFont:",send(cls("NSFont"),"systemFontOfSize:weight:",best?11.5:10.5,best?.56:.3));
+   send<void>(pct,"setStringValue:",w?formatInt("%ld%%",(Int)left):str(usageAsking(p)?"…":"—"));send<void>(pct,"setTextColor:",!w||stale?faint():usageColor(left));
+   // The account with the most weekly headroom is the one to switch to: its number is set a little heavier.
+   send<void>(pct,"setFont:",monoFont(12,best?.5:.3));
    // One thin segment per limit window, in the card's order (week · short · per-model).
    UInt n=usageWindowCount(p);double total=send<double>(get(ref,"width"),"doubleValue"),gap=4,segment=n?(total-gap*(n-1))/n:total;
    for(UInt k=0;k<usageShown;++k){Obj t=at(get(ref,"track"),k),f=at(get(ref,"fill"),k);usageHide(t,k>=n);if(k>=n)continue;int part=usageRemaining(usageWindowAt(p,k));
-    send<void>(t,"setFrame:",rect(55+k*(segment+gap),51,segment,3));send<void>(f,"setFrame:",rect(0,0,segment*deck::usageFill(part),3));send<void>(send(f,"layer"),"setBackgroundColor:",send(stale?edgeMuted():usageColor(part),"CGColor"));}
+    send<void>(t,"setFrame:",rect(52+k*(segment+gap),47,segment,3));send<void>(f,"setFrame:",rect(0,0,segment*deck::usageFill(part),3));send<void>(send(f,"layer"),"setBackgroundColor:",send(stale?faint():usageColor(part),"CGColor"));}
    send<void>(get(ref,"button"),"setToolTip:",cat(cat(get(ref,"tip"),str("\n")),usageSummary(p)));}
  }
 }
@@ -149,7 +164,7 @@ void edgeRefresh(){
 UInt edgeRowIndex(Obj row){for(UInt i=0;i<count(edgeRefs);++i)if(get(at(edgeRefs,i),"row")==row)return i;return count(edgeRefs);}
 void edgeLift(Obj row){
  Obj layer=send(row,"layer");send<void>(layer,"setZPosition:",10.0);
- send<void>(layer,"setBackgroundColor:",send(color(.19,.22,.28,.97),"CGColor"));send<void>(layer,"setBorderColor:",send(color(1,1,1,.24),"CGColor"));
+ send<void>(layer,"setBackgroundColor:",send(color(.25,.25,.26,.96),"CGColor"));send<void>(layer,"setBorderColor:",send(fill(.18),"CGColor"));
  send<void>(layer,"setShadowColor:",send(color(0,0,0,1),"CGColor"));send<void>(layer,"setShadowOpacity:",(float).5);send<void>(layer,"setShadowRadius:",8.0);send<void>(layer,"setShadowOffset:",Extent{0,0});
 }
 // Moves every row a part of the way to its place (the dragged one too once released); true = all arrived.
@@ -220,12 +235,12 @@ void ensureEdge(){
  edgeEffect=send(send(cls("NSVisualEffectView"),"alloc"),"initWithFrame:",rect(0,0,W,H));
  send<void>(edgeEffect,"setMaterial:",(Int)13);send<void>(edgeEffect,"setBlendingMode:",(Int)0);send<void>(edgeEffect,"setState:",(Int)1);
  send<void>(edgeEffect,"setWantsLayer:",true);send<void>(edgeEffect,"setAutoresizingMask:",(UInt)(2|16));
- // The dock touches the screen border: only the two left corners are rounded (kCALayerMinX*).
- Obj layer=send(edgeEffect,"layer");send<void>(layer,"setCornerRadius:",edgeCorner);send<void>(layer,"setMaskedCorners:",(UInt)5);send<void>(layer,"setMasksToBounds:",true);send<void>(layer,"setBorderWidth:",1.0);send<void>(layer,"setBorderColor:",send(color(1,1,1,.16),"CGColor"));
+ // The panel floats off the screen border: all four corners are rounded (continuous), with a light rim.
+ Obj layer=send(edgeEffect,"layer");send<void>(layer,"setCornerRadius:",edgeCorner);continuous(layer);send<void>(layer,"setMasksToBounds:",true);send<void>(layer,"setBorderWidth:",1.0);send<void>(layer,"setBorderColor:",send(fill(.12),"CGColor"));
  send<void>(edgePanel,"setContentView:",edgeEffect);drop(edgeEffect);
- edgeShade=panel(edgeEffect,rect(0,0,W,H),color(.035,.043,.062,.62),edgeCorner);send<void>(send(edgeShade,"layer"),"setMaskedCorners:",(UInt)5);send<void>(edgeShade,"setAutoresizingMask:",(UInt)(2|16));
- edgeRipple=panel(edgeEffect,rect(0,0,W,H),color(.65,.78,1,.02),edgeCorner);send<void>(send(edgeRipple,"layer"),"setMaskedCorners:",(UInt)5);
- send<void>(send(edgeRipple,"layer"),"setBorderWidth:",6.0);send<void>(send(edgeRipple,"layer"),"setBorderColor:",send(color(.7,.83,1,.12),"CGColor"));
+ edgeShade=panel(edgeEffect,rect(0,0,W,H),color(.118,.118,.129,.55),edgeCorner);send<void>(edgeShade,"setAutoresizingMask:",(UInt)(2|16));
+ edgeRipple=panel(edgeEffect,rect(0,0,W,H),fill(.02),edgeCorner);
+ send<void>(send(edgeRipple,"layer"),"setBorderWidth:",6.0);send<void>(send(edgeRipple,"layer"),"setBorderColor:",send(fill(.10),"CGColor"));
  edgeContent=send(send((Obj)deckViewClass,"alloc"),"initWithFrame:",rect(0,0,W,H));send<void>(edgeContent,"setWantsLayer:",true);send<void>(edgeEffect,"addSubview:",edgeContent);drop(edgeContent);
  rebuildEdgeContent();
 }
@@ -256,7 +271,7 @@ void setEdgeVisible(bool show){
   drop(edgeScreen);edgeScreen=keep(pointerScreen());if(!edgeScreen){edgeWanted=false;return;}edgeLayout();
   edgeReducedMotion=send<bool>(workspace,"accessibilityDisplayShouldReduceMotion");
   bool reducedTransparency=send<bool>(workspace,"accessibilityDisplayShouldReduceTransparency");
-  send<void>(send(edgeShade,"layer"),"setBackgroundColor:",send(reducedTransparency?color(.09,.10,.13):color(.035,.043,.062,.62),"CGColor"));
+  send<void>(send(edgeShade,"layer"),"setBackgroundColor:",send(reducedTransparency?color(.11,.11,.12):color(.118,.118,.129,.55),"CGColor"));
   send<void>(window,"orderOut:",(Obj)nullptr);send<bool>(app,"setActivationPolicy:",(Int)1);
   if(opening)edgeScrollHome=true;edgeRebuild=true;edgeRefresh();renderEdge();send<void>(edgePanel,"orderFrontRegardless");
  }

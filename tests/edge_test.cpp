@@ -13,8 +13,8 @@ int main(){
  const deck::Box screens[]={{0,24,1512,920},{-2560,40,2560,1400},{0,-1300,1920,1200},{3456,800,1600,900},{0,0,744,460}};
  for(auto s:screens){for(unsigned rows:{1u,4u,6u}){auto e=deck::edgeBounds(s,deck::edgeWidth,deck::edgeHeight(rows));
   check(e.x>=s.x&&e.y>=s.y&&e.x+e.w<=s.x+s.w+1e-7&&e.y+e.h<=s.y+s.h+1e-7);
-  // The dock is flush with the right border of the visible frame and vertically centred.
-  check(close(e.x+e.w,s.x+s.w));check(close(e.y+e.h/2,s.y+s.h/2));
+  // The panel floats edgeMargin off the right border of the visible frame and is vertically centred.
+  check(close(e.x+e.w,s.x+s.w-deck::edgeMargin));check(close(e.y+e.h/2,s.y+s.h/2));
   double lastWidth=0;
   for(int i=0;i<=100;++i){auto f=deck::edgeFrame(e,i/100.0,false);check(std::isfinite(f.x)&&f.w>0&&f.h>0);check(close(f.x+f.w,e.x+e.w));check(close(f.y+f.h/2,e.y+e.h/2));check(f.w<=e.w&&f.h<=e.h);
    // Slide-out: width only grows, height never changes, nothing crosses the screen border.
@@ -32,6 +32,7 @@ int main(){
   if(r<deck::edgeMaxRows&&n>r)check(deck::edgeHeight(r+1)>h-24);} // it is also the LARGEST count that fits
  for(unsigned n=0;n<=40;++n){unsigned r=deck::edgeRows(n,5000);check(n>=deck::edgeMaxRows?r==deck::edgeMaxRows:r==(n?n:1));} // one row per profile, no spare rows
  check(deck::edgeBounds({0,0,120,90}).w<=120);check(deck::edgeBounds({0,0,120,90}).h<=90);
+ {auto tight=deck::edgeBounds({0,0,270,900});check(tight.x>=0&&tight.x+tight.w<=270+1e-7);} // no room for the margin: back to the border, still on screen
  // Everything that is not visible scrolls: the range is exactly the hidden rows, never negative.
  for(unsigned n=0;n<=40;++n)for(unsigned r=1;r<=deck::edgeMaxRows;++r){double range=deck::edgeScrollRange(n,r);check(range>=0);
   check(n<=r?range==0:close(range,(n-r)*deck::edgeStep));check(close(deck::edgeListHeight(r)+range,deck::edgeListHeight(n>r?n:r)));}
