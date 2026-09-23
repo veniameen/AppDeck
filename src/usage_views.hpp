@@ -49,6 +49,7 @@ Obj usageMessage(Obj p){
   if(same(e,str("unsupported")))return str(T("This Claude Code version does not report limits — update claude","Эта версия Claude Code не сообщает лимиты — обновите claude"));
   if(same(e,str("nodata")))return str(T("Claude Code got no limits from the server — click to retry","Claude Code не получил лимиты от сервера — нажмите, чтобы повторить"));
  }
+ if(same(e,str("proxy"))&&!usageAsking(p))return str(T("The proxy did not start — limits wait for it","Прокси не запустился — лимиты подождут"));
  if(usageAsking(p))return str(T("Checking limit…","Проверяю лимит…"));if(!u)return str(T("Limit not checked yet — click to check","Лимит ещё не запрашивался — нажмите, чтобы проверить"));
  if(same(e,str("auth")))return str(T("Not signed in — the limit appears after sign-in","Нет входа в аккаунт — лимит появится после входа"));
  if(same(e,str("apikey")))return str(T("Signed in with an API key: subscription limits do not apply","Вход по API-ключу: лимиты подписки не применяются"));

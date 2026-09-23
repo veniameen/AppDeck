@@ -2,6 +2,7 @@
 #include "core.hpp"
 #include "edge_policy.hpp"
 #include "usage_policy.hpp"
+#include "proxy_policy.hpp"
 using namespace mac;
 namespace {
 constexpr const char* VERSION="0.11.0";
@@ -29,6 +30,7 @@ void edgeRefresh();void invalidateEdge();void connectBaseAction(Obj,Sel,Obj);
 void showWindowAction(Obj,Sel,Obj);void focus(Obj);bool isMaster(Obj);
 void syncBaseProjectsAction(Obj,Sel,Obj);void toggleHistoryAction(Obj,Sel,Obj);void toggleUsageAction(Obj,Sel,Obj);void usageSanitize(Obj);void usagePump();Obj cleanEnvironment();bool askUsage(Obj);void usageForce(Obj);
 bool groupSyncEnabled(Obj);Obj syncGroup(Obj,bool);void groupSyncPump(bool);void automationOwnerAction(Obj,Sel,Obj);
+bool usageProxy(Obj,Obj);void proxyProfileMenu(Obj,Obj,Int); // proxy_store.hpp / proxy_views.hpp
 Obj color(double r,double g,double b,double a=1){return send(cls("NSColor"),"colorWithSRGBRed:green:blue:alpha:",r,g,b,a);}
 // Design tokens ("Graphite glass"): warm bone ink on dark glass. Colour appears only for state (live,
 // warn, danger) and for the profile's identity badge; controls are neutral glass.
@@ -183,6 +185,7 @@ bool ensureShared(Obj a){
 #include "window_control.hpp"
 #include "workspace_base.hpp"
 #include "usage_limits.hpp"
+#include "proxy_store.hpp"
 #include "project_sync.hpp"
 #include "automation_sync.hpp"
 #include "project_server_sync.hpp"
@@ -239,6 +242,10 @@ bool launch(Obj p,bool activate=true){
   if(sharesHistory(p)){put(env,"CODEX_SQLITE_HOME",canonical(baseSource(a)));put(p,"historyMode",str("shared"));}else erase(p,"historyMode");}
  if(adapter==deck::Adapter::Claude)put(env,"CLAUDE_USER_DATA_DIR",ud);
  if(adapter==deck::Adapter::VSCode){add(args,str("--new-window"));add(args,cat(str("--extensions-dir="),join(base,"extensions")));}
+ // Behind a proxy: a private loopback bridge for this window (it adds the credentials Chromium cannot send).
+ Obj proxy=proxyFor(p),bridge=nullptr;
+ if(proxy){Obj why=nullptr;bridge=proxyServe(proxy,&why);if(!bridge){showError(cat(cat(str(T("Proxy “","Прокси «")),get(proxy,"name")),str(T("” is unavailable","» недоступен"))),why?why:str(""));return false;}
+  proxyApply(env,args,(int)integer(get(bridge,"port")));}
  Obj config=dict();Obj ek=publicConstant(appKit,"NSWorkspaceLaunchConfigurationEnvironment");Obj ak=publicConstant(appKit,"NSWorkspaceLaunchConfigurationArguments");
  if(!ek||!ak){showError(str(T("macOS API unavailable","API macOS недоступен")),str(T("System launch constants not found. Please send diagnostics for this macOS version.","Не найдены системные константы запуска. Отправьте диагностику этой версии macOS.")));return false;}
  send<void>(config,"setObject:forKey:",env,ek);send<void>(config,"setObject:forKey:",args,ak);
@@ -250,8 +257,10 @@ bool launch(Obj p,bool activate=true){
  Obj err=nullptr;
  UInt options=(1UL<<19)|(activate?0:(1UL<<9)); // NSWorkspaceLaunchNewInstance / WithoutActivation
  Obj r=send(workspace,"launchApplicationAtURL:options:configuration:error:",url(path),options,config,&err);
+ if(!r)proxyAbandon(bridge);
  if(!r){put(p,"lastError",err?send(err,"localizedDescription"):str(T("LaunchServices returned no process.","LaunchServices не вернул процесс.")));save();showError(str(T("Could not launch","Не удалось запустить")),get(p,"lastError"));return false;}
  int pid=send<int>(r,"processIdentifier");
+ if(bridge){proxyWatch(bridge,pid);put(p,"proxyUsed",get(proxy,"name"));}else erase(p,"proxyUsed");
  for(UInt i=0;i<count(alreadyRunning);++i)if(integer(at(alreadyRunning,i))==pid){
   put(p,"lastError",str(T("The app returned an already running process instead of a new instance. Isolation not confirmed.","Вместо нового экземпляра приложение вернуло уже работавший процесс. Изоляция не подтверждена.")));save();
   showError(str(T("No separate instance was created","Отдельный экземпляр не создан")),str(T("An already running window opened, possibly outside AppDeck. Do not sign out or change settings in it. This app version did not accept an isolated launch.","Открыто уже работавшее окно, возможно вне AppDeck. Не выходите из аккаунта и не меняйте настройки в нём. Эта версия приложения не приняла изолированный запуск.")));return false;
@@ -354,6 +363,7 @@ void moreAction(Obj,Sel,Obj sender){Obj p=fromSender(sender);if(!p)return;Int ta
  // The order is shared with the side panel and ⌃⌥1…8; here it moves among this app's cards.
  {Obj ps=visibleProfiles();UInt place=send<UInt>(ps,"indexOfObjectIdenticalTo:",p);
   send<void>(menuItem(m,T("Move up","Переместить выше"),"profileMoveUp:",tag),"setEnabled:",place>0&&place<count(ps));send<void>(menuItem(m,T("Move down","Переместить ниже"),"profileMoveDown:",tag),"setEnabled:",place+1<count(ps));separator(m);}
+ proxyProfileMenu(m,p,tag);separator(m);
  menuItem(m,T("Profile folder","Папка профиля"),"profileFolder:",tag);
  if(deck::adapter(utf8(get(appFor(p),"adapter")))==deck::Adapter::Codex)menuItem(m,truth(get(p,"share"))?T("Detach shared settings…","Отделить общие настройки…"):T("Use shared settings…","Подключить общие настройки…"),"toggleShare:",tag);
  separator(m);Obj again=menuItem(m,T("Restart…","Перезапустить…"),"restartProfile:",tag);send<void>(again,"setEnabled:",running(p)!=nullptr);
@@ -568,6 +578,8 @@ void diagnosticsAction(Obj,Sel,Obj){
  add(lines,str(translocated()?"App Translocation: YES (quarantined copy; Accessibility permission cannot persist)":"App Translocation: no"));
  add(lines,str(windowAPI.permission(false)?"Accessibility: granted":"Accessibility: not granted (launch/activate still work; tiling needs it)"));
  add(lines,send(send(cls("NSProcessInfo"),"processInfo"),"operatingSystemVersionString"));
+ {Int own=0;for(UInt i=0;i<count(profiles);++i)if(isClass(get(at(profiles,i),"proxy"),"NSString"))++own; // counts only: addresses and logins stay out
+  char b[160];snprintf(b,sizeof b,"Proxies: %ld configured, default %s, %ld profiles with their own choice, bridge %s",(Int)count(proxies),proxyDefault()?"set":"none",own,proxyHelper()?"present":"MISSING");add(lines,str(b));}
 #if defined(__aarch64__) || defined(__arm64__)
  add(lines,str("Architecture: arm64"));
 #else
@@ -703,6 +715,7 @@ Obj footerNote(double x,double y,double w,const char* glyph,Obj text){
  double tx=x;if(glyph){imageView(rootView,symbol(glyph,12),rect(x,y+8,16,16),faint());tx+=22;}
  Obj l=labelObj(rootView,text,rect(tx,y+8,w-(tx-x),16),12,faint(),0);send<void>(l,"setLineBreakMode:",(Int)4);return l;
 }
+#include "proxy_views.hpp"
 void buildUI(){
  if(!rootView||building)return;building=true;
  Obj old=send(send(rootView,"subviews"),"copy");for(UInt i=0;i<count(old);++i)send<void>(at(old,i),"removeFromSuperview");drop(old);send<void>(cardRefs,"removeAllObjects");footer=nullptr;usageFooter=nullptr;
@@ -716,10 +729,10 @@ void buildUI(){
   send<void>(l,"setShadowColor:",send(color(0,0,0,1),"CGColor"));send<void>(l,"setShadowOpacity:",(float).18);send<void>(l,"setShadowRadius:",12.0);send<void>(l,"setShadowOffset:",Extent{0,-8});
   panel(pane,rect(14,0,196,1),fill(.07),0);}
  kern(label(rootView,"AppDeck",rect(26,56,190,22),17,ink(),.4),-.17);label(rootView,T("One place. Many accounts.","Одно место. Разные аккаунты."),rect(26,78,190,14),11,faint(),0);
- const char* navTitles[]={T("Profiles","Профили"),T("Shared settings","Общие настройки"),T("Projects","Проекты"),T("About","О приложении")};const char* navIcons[]={"person.2","slider.horizontal.3","folder","info.circle"};
- for(Int i=0;i<4;++i){Obj b=navRow(rootView,rect(16,112+i*34,208,32),symbol(navIcons[i],13),true,str(navTitles[i]),"changePage:",i,page==i);if(page==i)send<void>(b,"setAccessibilitySelected:",true);}
- caption(rootView,T("APPS","ПРИЛОЖЕНИЯ"),rect(26,264,190,14));
- double listTop=284,listH=count(apps)*34.0,listMax=H-listTop-150;if(listMax<68)listMax=68;if(listH>listMax)listH=listMax;
+ const char* navTitles[]={T("Profiles","Профили"),T("Shared settings","Общие настройки"),T("Projects","Проекты"),T("Proxy","Прокси"),T("About","О приложении")};const char* navIcons[]={"person.2","slider.horizontal.3","folder","network","info.circle"};
+ for(Int i=0;i<5;++i){Obj b=navRow(rootView,rect(16,112+i*34,208,32),symbol(navIcons[i],13),true,str(navTitles[i]),"changePage:",i,page==i);if(page==i)send<void>(b,"setAccessibilitySelected:",true);}
+ caption(rootView,T("APPS","ПРИЛОЖЕНИЯ"),rect(26,298,190,14));
+ double listTop=318,listH=count(apps)*34.0,listMax=H-listTop-150;if(listMax<68)listMax=68;if(listH>listMax)listH=listMax;
  Obj sideList=scrollDocument(rootView,rect(16,listTop,208,listH),count(apps)*34.0);
  for(UInt i=0;i<count(apps);++i){Obj a=at(apps,i);Int n=0;for(UInt j=0;j<count(profiles);++j)if(same(get(at(profiles,j),"appId"),get(a,"id")))++n;
   navRow(sideList,rect(0,i*34.0,208,32),send(workspace,"iconForFile:",get(a,"path")),false,get(a,"name"),"selectApp:",(Int)i,same(get(a,"id"),selected),formatInt("%ld",n));}
@@ -816,6 +829,8 @@ void buildUI(){
     bx-=8+finderW;Obj finder=button(box,"Finder","projectAction:",rect(bx,y+14,finderW,32),(Int)i*3,false,"folder");if(!present)disable(finder);
    }}
   footerNote(x,footY,w,"arrow.triangle.branch",str(T("To change code from several accounts at once, use separate Git worktrees.","Для одновременного изменения кода из разных аккаунтов используйте отдельные Git worktree.")));
+ }else if(page==3){
+  buildProxyPage(x,w,footY);
  }else{
   pageHeader(x,w,"APPDECK · MACOS",str(T("Native profile manager","Нативный менеджер профилей")),str(T("No Electron, no WebView, no telemetry, no server of its own.","Без Electron, WebView, телеметрии и собственного сервера.")));
   Obj box=card(rootView,rect(x,138,w,152),16);imageView(box,send(app,"applicationIconImage"),rect(24,24,80,80));
@@ -851,6 +866,7 @@ void refresh(){
   Obj ref=get(cardRefs,utf8(get(p,"id")));
   if(ref){Obj status=get(ref,"status");bool failed=get(p,"lastError")!=nullptr;
    send<void>(status,"setStringValue:",restarting(p)?str(T("Restarting…","Перезапускается…")):active?str(truth(get(p,"syncPending"))?T("Running · updates pending","Запущен · есть обновления"):T("Running","Запущен")):failed?str(T("Failed to start","Не запустился")):str(T("Not running","Не запущен")));
+   if(Obj via=proxyShownName(p))send<void>(status,"setStringValue:",cat(cat(send(status,"stringValue"),str(T(" · via "," · через "))),via));
    send<void>(status,"setTextColor:",restarting(p)||failed?warnColor():muted());
    if(Obj dot=get(ref,"dot"))statusDotColor(dot,restarting(p)||failed?warnColor():active?liveColor():dim(),active,!active&&!restarting(p)&&!failed);send<void>(status,"setToolTip:",truth(get(p,"syncPending"))?str(T("The shared list and automations apply after this instance fully restarts.","Общий список и автоматизации применятся после полного перезапуска этого экземпляра.")):get(p,"lastError"));
    if(truth(get(ref,"live"))!=active)flagged=true; // the button row differs between the two states
@@ -868,7 +884,7 @@ void refresh(){
 void buildMenus(){
  invalidateEdge();Obj bar=make("NSMenu");
  Obj top=menuItem(bar,"AppDeck",nullptr);Obj m=make("NSMenu");send<void>(top,"setSubmenu:",m);
- menuItem(m,T("Show AppDeck","Показать AppDeck"),"showWindow:");menuItem(m,T("Side panel  ⌃⌥Space","Правая панель  ⌃⌥Space"),"toggleEdge:");menuItem(m,T("About","О приложении"),"changePage:",3);menuItem(m,T("User guide","Инструкция (EN)"),"showHelp:");separator(m);
+ menuItem(m,T("Show AppDeck","Показать AppDeck"),"showWindow:");menuItem(m,T("Side panel  ⌃⌥Space","Правая панель  ⌃⌥Space"),"toggleEdge:");menuItem(m,T("About","О приложении"),"changePage:",4);menuItem(m,T("User guide","Инструкция (EN)"),"showHelp:");separator(m);
  Obj quit=menuItem(m,T("Quit AppDeck","Завершить AppDeck"),"terminate:",-1,"q");send<void>(quit,"setTarget:",app);drop(m);
  top=menuItem(bar,T("File","Файл"),nullptr);m=make("NSMenu");send<void>(top,"setSubmenu:",m);
  menuItem(m,T("New Profile…","Новый профиль…"),"newProfile:",-1,"n");menuItem(m,T("Add App…","Добавить приложение…"),"chooseApp:");menuItem(m,T("Add Project…","Добавить проект…"),"addProject:");separator(m);menuItem(m,T("Diagnostics…","Диагностика…"),"diagnostics:");
@@ -887,7 +903,7 @@ void buildMenus(){
  }
 }
 bool flipped(Obj,Sel){return true;}
-void tick(Obj,Sel,Obj){Pool pool;if(adoptRunning())save();restartPump();groupSyncPump(false);usagePump();refresh();}
+void tick(Obj,Sel,Obj){Pool pool;proxyReap();if(adoptRunning())save();restartPump();groupSyncPump(false);usagePump();refresh();}
 void resizeWindow(Obj,Sel,Obj){buildUI();}
 void finishedLaunching(Obj,Sel,Obj){installHotkeys();showWindowAction(nullptr,nullptr,nullptr);
  for(UInt i=0;i<count(apps);++i){Obj a=at(apps,i);if(!usageCapable(a)||get(a,"usageLimits")||!usageBinary(a))continue;
@@ -952,8 +968,8 @@ bool renderView(Obj view,Obj path){
 }
 void renderPreview(Obj dir){
  Obj e=nullptr;send<bool>(fileManager,"createDirectoryAtPath:withIntermediateDirectories:attributes:error:",dir,true,(Obj)nullptr,&e);
- const char* names[]={"page-profiles.png","page-shared.png","page-projects.png","page-about.png"};
- for(Int i=0;i<4;++i){page=i;buildUI();send<void>(rootView,"layoutSubtreeIfNeeded");renderView(rootView,join(dir,names[i]));}
+ const char* names[]={"page-profiles.png","page-shared.png","page-projects.png","page-proxy.png","page-about.png"};
+ for(Int i=0;i<5;++i){page=i;buildUI();send<void>(rootView,"layoutSubtreeIfNeeded");renderView(rootView,join(dir,names[i]));}
  ensureEdge();drop(edgeScreen);edgeScreen=keep(send(cls("NSScreen"),"mainScreen"));edgeLayout();edgeProgress=1;
  send<void>(send(edgeShade,"layer"),"setBackgroundColor:",send(color(.11,.11,.12),"CGColor"));
  edgeWanted=true;edgeRebuild=true;edgeRefresh();renderEdge();edgeWanted=false;send<void>(edgeEffect,"layoutSubtreeIfNeeded");renderView(edgeEffect,join(dir,"edge-dock.png"));
@@ -975,6 +991,8 @@ void registerClasses(){
  {"openSharedFolder:",openSharedFolder},{"openSharedFile:",openSharedFile},{"importSettings:",importSettings},{"openData:",openDataAction},{"addProject:",addProjectAction},
  {"projectAction:",projectAction},{"showHelp:",helpAction},{"diagnostics:",diagnosticsAction},{"tileWindows:",tileAction},{"timerTick:",tick},
  {"toggleEdge:",toggleEdgeAction},{"edgeFocus:",edgeFocusAction},
+ {"proxyAdd:",proxyAddAction},{"proxyEdit:",proxyEditAction},{"proxyRemove:",proxyRemoveAction},{"proxyCheck:",proxyCheckAction},{"proxyCheckWorker:",proxyCheckWorker},{"proxyCheckFinished:",proxyCheckFinished},
+ {"proxyDefaultMenu:",proxyDefaultMenuAction},{"proxyDefaultPick:",proxyDefaultPickAction},{"profileProxy:",profileProxyAction},
  {"edgeMoveUp:",edgeMoveUpAction},{"edgeMoveDown:",edgeMoveDownAction},{"edgeMoveFirst:",edgeMoveFirstAction},{"edgeDropped:",edgeDroppedAction},{"edgeScrolled:",edgeScrolledAction},{"selfTestTick:",selfTestTick},{"selfTestClick:",selfTestClickAction},{"edgeAnimationTick:",edgeAnimationTick},
  {"hideProfiles:",hideProfilesAction},{"restoreWindows:",restoreWindowsAction},
  {"connectBase:",connectBaseAction},{"syncBaseProjects:",syncBaseProjectsAction},{"automationOwner:",automationOwnerAction},{"toggleHistory:",toggleHistoryAction},{"toggleUsage:",toggleUsageAction},{"usageRefresh:",usageRefreshAction},{"usageRefreshAll:",usageRefreshAllAction},{"usageWorker:",usageWorker},{"usageFinished:",usageFinished},{"noop:",noopAction},
@@ -1004,7 +1022,7 @@ int main(){
   Obj runningApps=send(cls("NSRunningApplication"),"runningApplicationsWithBundleIdentifier:",str("local.appdeck.manager"));Obj me=send(cls("NSRunningApplication"),"currentApplication");
   for(UInt i=0;i<count(runningApps);++i){Obj r=at(runningApps,i);if(r!=me)focus(r);}return 0;
  }
- load();registerClasses();send<void>(app,"setDelegate:",controller);
+ load();proxyLoad();registerClasses();send<void>(app,"setDelegate:",controller);
  if(!previewMode&&adoptRunning())save();
  // One bounded maintenance pass, with the same singleton/process checks as the GUI.
  // Used for local update acceptance; it never closes or starts a managed Codex window.

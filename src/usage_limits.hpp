@@ -74,6 +74,7 @@ void usageStartClaude(Obj p,Obj binary,Obj scratch){
  // Narrow opt-outs only. CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC must NOT be set: Claude Code counts the
  // usage request itself as non-essential and answers get_usage with rate_limits:null (0.7.0 did exactly that).
  for(const char* off:{"DISABLE_AUTOUPDATER","DISABLE_ERROR_REPORTING","DISABLE_TELEMETRY"})put(env,off,str("1"));
+ if(!usageProxy(p,env))return; // behind a proxy: through its bridge, or not at all
  Obj request=dict();put(request,"profile",get(p,"id"));put(request,"kind",str("claude"));put(request,"binary",binary);put(request,"scratch",scratch);put(request,"environment",env);
  drop(usageInFlight);usageInFlight=keep(get(p,"id"));usageStarted=usageUptime();usageLastProbe=nowUnix();
  send<void>(cls("NSThread"),"detachNewThreadSelector:toTarget:withObject:",sel("usageWorker:"),controller,request);
@@ -87,6 +88,7 @@ void usageStart(Obj p){
  Obj env=cleanEnvironment();put(env,"CODEX_HOME",canonical(codexHome));put(env,"CODEX_INTERNAL_APP_SERVER_REMOTE_CONTROL_DISABLED",str("1"));
  // Same database folder as the profile's own window: the shared base when history is shared.
  if(sharesHistory(p))put(env,"CODEX_SQLITE_HOME",canonical(baseSource(a)));
+ if(!usageProxy(p,env))return; // behind a proxy: through its bridge, or not at all
  Obj request=dict();put(request,"profile",get(p,"id"));put(request,"binary",binary);put(request,"scratch",scratch);put(request,"environment",env);
  drop(usageInFlight);usageInFlight=keep(get(p,"id"));usageStarted=usageUptime();usageLastProbe=nowUnix();
  send<void>(cls("NSThread"),"detachNewThreadSelector:toTarget:withObject:",sel("usageWorker:"),controller,request);
