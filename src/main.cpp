@@ -526,7 +526,7 @@ void removeAppAction(Obj,Sel,Obj){Obj a=currentApp();if(!a)return;
  send<void>(apps,"removeObjectIdenticalTo:",a);drop(selected);selected=count(apps)?keep(get(at(apps,0),"id")):nullptr;save();buildUI();buildMenus();
 }
 void pageAction(Obj,Sel,Obj sender){page=send<Int>(sender,"tag");buildUI();}
-void showWindowAction(Obj,Sel,Obj){setEdgeVisible(false);send<bool>(app,"setActivationPolicy:",(Int)0);send<void>(window,"makeKeyAndOrderFront:",(Obj)nullptr);send<void>(app,"activateIgnoringOtherApps:",true);}
+void showWindowAction(Obj,Sel,Obj){setEdgeVisible(false);send<bool>(app,"setActivationPolicy:",(Int)0);send<void>(window,"makeKeyAndOrderFront:",(Obj)nullptr);send<bool>(window,"makeFirstResponder:",(Obj)nullptr);send<void>(app,"activateIgnoringOtherApps:",true);}
 void launchAllAction(Obj,Sel,Obj){Obj ps=visibleProfiles();if(count(ps)>1&&!confirm(T("Launch all profiles of this group?","Запустить все профили этой группы?"),T("Each instance uses its own memory. Do the first sign-ins one after another, not in several windows at once.","Каждый экземпляр расходует память отдельно. Первую авторизацию выполняйте последовательно, не в нескольких окнах одновременно."),T("Launch","Запустить")))return;
  for(UInt i=0;i<count(ps);++i)if(isMaster(at(ps,i))&&!launch(at(ps,i),false))return;
  for(UInt i=0;i<count(ps);++i)if(!isMaster(at(ps,i))&&!launch(at(ps,i),false))break;refresh();}
@@ -1041,7 +1041,7 @@ int main(){
  if(previewMode){renderPreview(str(renderDir));return 0;}
  // Centre only on the very first run: the autosaved frame must survive relaunches.
  if(!send(send(cls("NSUserDefaults"),"standardUserDefaults"),"stringForKey:",str("NSWindow Frame AppDeckMainWindow")))send<void>(window,"center");
- send<void>(window,"makeKeyAndOrderFront:",(Obj)nullptr);
+ send<void>(window,"makeKeyAndOrderFront:",(Obj)nullptr);send<bool>(window,"makeFirstResponder:",(Obj)nullptr); // nothing focused until the user tabs
  timer=keep(send(cls("NSTimer"),"scheduledTimerWithTimeInterval:target:selector:userInfo:repeats:",2.0,controller,sel("timerTick:"),(Obj)nullptr,true));
  send<void>(app,"run");if(timer){send<void>(timer,"invalidate");drop(timer);}if(lockFd>=0)close(lockFd);return 0;
 }

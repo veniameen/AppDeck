@@ -24,11 +24,11 @@ AppDeck runs several accounts of the same desktop app side by side on macOS — 
 ![The main window: four Codex profiles with their accounts and usage limits](images/main-window.png)
 
 1. **Add an app.** Click **＋ Add app** in the sidebar and choose an installed app. AppDeck detects the adapter: Codex (`ChatGPT.app`), Claude Desktop, VS Code / Cursor, Chrome / Brave / Edge / Chromium, or an experimental mode for other Electron apps. The original `.app` is never copied or modified.
-2. **Create profiles.** Each profile is an ordinary macOS window of that app with its own private data folder and therefore its own sign-in. Use **＋ Profile** for more.
+2. **Create profiles.** Each profile is an ordinary macOS window of that app with its own private data folder and therefore its own sign-in. Use **New profile** for more.
 3. **Launch and sign in.** Click **Launch** on a card and sign in inside the app window. Sign in to one new account at a time.
 4. **Switch.** Click a card, press **⌘1–9** while AppDeck is active, or open the [side panel](#the-side-panel) with **⌃⌥Space** from anywhere.
 
-A running profile's card offers **Close** (a normal quit request — never a force kill), **Restart** (quit, then launch again once the process has really exited) and **Window** (bring it forward). If a window was closed with the red button, AppDeck reopens it: it sends the same *reopen* event the Dock icon sends, addressed to that very process.
+A running profile's card offers **Show window** (bring it forward) and two round buttons: **Restart** ↻ (quit, then launch again once the process has really exited) and **Close** ✕ (a normal quit request — never a force kill). A stopped card has **Launch**, the profile folder and, after a failed start, a warning button that explains what happened. Every round button names itself in its tooltip. If a window was closed with the red button, AppDeck reopens it: it sends the same *reopen* event the Dock icon sends, addressed to that very process.
 
 ## What is separate and what is shared
 
@@ -118,7 +118,7 @@ Consent dialogs (limits, shared history) cannot be accepted with Return; Escape 
 
 ## Claude Desktop
 
-Add `Claude.app` with **＋ Add app**; the Claude Desktop adapter is preselected. The checkbox **Add the existing sign-in (current window) as the primary profile** creates **Primary · current**: the ordinary Claude with its usual data, attached or launched normally. Every other profile is a new, empty sign-in.
+Add `Claude.app` with **Add app**; the Claude Desktop adapter is preselected. The checkbox **Add the existing sign-in (current window) as the primary profile** creates **Primary · current**: the ordinary Claude with its usual data, attached or launched normally. Every other profile is a new, empty sign-in.
 
 | Data | Behaviour |
 |---|---|
@@ -144,7 +144,7 @@ Add `Claude.app` with **＋ Add app**; the Claude Desktop adapter is preselected
 
 <p align="center"><img src="images/side-panel.png" width="300" alt="The side panel with six profiles of Codex and Claude"></p>
 
-Click **◧ Side panel** at the bottom of the sidebar or press **⌃⌥Space** in any app. The main window and AppDeck's Dock icon step aside, and a slim translucent panel slides out of the right edge of the screen under the pointer: one column with the profiles of every app. It shows each profile's colour, icon, name, state, limit and place number — not a picture of its window, so no screen recording permission is needed.
+Click **Side panel** at the bottom of the sidebar or press **⌃⌥Space** in any app. The main window and AppDeck's Dock icon step aside, and a slim glass panel unfolds at the right edge of the screen under the pointer: one column with the profiles of every app. It shows each profile's icon with its colour badge, name, status light, limit and place number — not a picture of its window, so no screen recording permission is needed.
 
 At most **six rows** are visible (fewer on a short screen); further profiles scroll. The panel always opens at the top and without any shading; a soft edge appears only while a row is cut by the top or bottom edge during scrolling.
 

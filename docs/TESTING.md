@@ -27,14 +27,14 @@ No check signs in to an account, sends a model turn or opens a real profile's da
 
 Why the self-test replays events inside the app: on macOS 26 mouse events posted to another process (`CGEventPostToPid`) are dropped, and posting to the system event stream would move the user's pointer. The self-test therefore covers everything from `-[NSApplication sendEvent:]` on; a real pointer or trackpad gesture is part of the manual checklist.
 
-## Status of 0.10.0
+## Status of 0.11.0
 
 Verified on macOS 26.2, Apple Silicon, Apple clang 17:
 
-- `APPDECK_GUI_SELFTEST=1 make verify` passed: 584 localized string pairs; core 273, edge 485 416, workspace filter 68, usage 1 469, project sync 44 and automation sync 80 assertions; native project import/update/delete and 188 group-sync assertions against Codex's `app-server`; API and Accessibility smoke tests; a signed-out `get_usage` exchange with Claude Code; the side panel self-test (17 checks) on arm64 and x86_64 in English and Russian.
-- Accessibility checks in a sandbox: the row menu offers Move up / Move down / Move to top with impossible moves disabled; the card menu offers Move up / Move down; the order and the migration flag are written to `state.plist`; the list scroll bar works through Accessibility; with `-AppleShowScrollBars Always` the scroller stays an overlay.
-- Window captures of the side panel at rest (top and end of the list: no shade), with rows cut by both edges (soft edges) and during a drag with auto-scroll.
-- The upgrade of real data from 0.8 kept the side panel order; only the order of the profile array and the `profileOrder` flag changed.
+- `APPDECK_GUI_SELFTEST=1 make verify` passed: 602 localized string pairs; core 273, edge 485 417, workspace filter 68, usage 1 469, project sync 44 and automation sync 80 assertions; the static bundle check for both slices; native project import/update/delete and 188 group-sync assertions against Codex's `app-server`; API and Accessibility smoke tests; a signed-out `get_usage` exchange with Claude Code; the side panel self-test (17 checks) on arm64 and x86_64 in English and Russian.
+- The redesign was checked against the design canvas in the running app with demo data (`tools/make_demo_data.py`), over a neutral wallpaper: every main-window page in English and the Claude group in Russian, the side panel in both languages, labels at the default window size with nothing truncated, the traffic lights inside the sidebar pane, no control focused when the window opens.
+- `APPDECK_RENDER_DIR` renders of all pages and the side panel in both languages.
+- The new icon: every size of `AppDeck.icns` rendered at its own pixel size; 16 and 32 px decode correctly through AppKit.
 
 Not verified yet:
 
@@ -56,7 +56,7 @@ Use `APPDECK_DATA_ROOT` and a disposable test project. Back up `~/.codex` and ex
 
 ### Side panel
 
-- **Side panel** hides the main window and the Dock icon; the menu bar item stays. The panel is flush with the right border of the visible frame, vertically centred, left corners rounded; at most six rows are visible and the rest scrolls.
+- **Side panel** hides the main window and the Dock icon; the menu bar item stays. The panel floats 12 pt off the right border of the visible frame, vertically centred, all corners rounded; at most six rows are visible and the rest scrolls.
 - Slide-out and reverse close; toggling quickly during the animation leaves no invisible window intercepting clicks. Reduce Motion gives a fade, Reduce Transparency an opaque background.
 - The first click on a row works while another app is active, without making the panel key; hover highlights rows and tiles.
 - Secondary text stays legible over a bright and over a dark window behind the panel.
@@ -72,7 +72,7 @@ Use `APPDECK_DATA_ROOT` and a disposable test project. Back up `~/.codex` and ex
 - With permission: minimized windows, dialogs, closed windows, full screen, an app whose minimum width exceeds half the screen.
 - **2×2** with one to four windows gives equal cells inside the visible frame when the apps allow it; **Restore** returns the same surviving windows to their rectangles and never addresses a relaunched process as the old window.
 - **Hide** never sends terminate or kill. A click raises a window once; nothing is kept on top.
-- A window closed with the red button comes back from **Window**, a panel row or ⌃⌥N; another instance of the same bundle is never raised instead.
+- A window closed with the red button comes back from **Show window**, a panel row or ⌃⌥N; another instance of the same bundle is never raised instead.
 
 ### Primary Codex and copies
 

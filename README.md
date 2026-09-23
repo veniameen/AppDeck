@@ -22,9 +22,10 @@ AppDeck is a small native macOS app for people who work in the same desktop app 
 
 - **Separate sign-ins, shared work.** Each profile gets its own private data folder, so every window stays signed in to its own account. For Codex you can share settings, chat history, projects and automations between the accounts — without copying a single database or token.
 - **Usage limits at a glance.** The weekly, 5-hour and per-model windows of every Codex and Claude account with their reset times, asked from the apps' own tools. The account with the most headroom stands out.
-- **Side panel.** Press <kbd>⌃</kbd><kbd>⌥</kbd><kbd>Space</kbd> anywhere: a slim panel slides out of the screen edge. Click a row or press <kbd>⌃</kbd><kbd>⌥</kbd><kbd>1</kbd>…<kbd>8</kbd> to launch or switch, drag rows into your own order, scroll when you have more than six profiles.
+- **Side panel.** Press <kbd>⌃</kbd><kbd>⌥</kbd><kbd>Space</kbd> anywhere: a slim glass panel unfolds at the right edge of the screen. Click a row or press <kbd>⌃</kbd><kbd>⌥</kbd><kbd>1</kbd>…<kbd>8</kbd> to launch or switch, drag rows into your own order, scroll when you have more than six profiles.
 - **Window tools.** Arrange four windows in a 2×2 grid and put them back, hide every profile at once, reopen a window that was closed with the red button.
 - **Native and light.** One C++17 translation unit on public AppKit and Objective-C runtime APIs. No Electron, no WebView, no network client, no telemetry. A universal binary for macOS 13 and later.
+- **Graphite glass.** A dark translucent interface in the manner of macOS 26: one bone-white ink, capsule controls of one height, colour only for state and for each profile's badge.
 - **English and Russian.** The interface follows your macOS language.
 
 ## Supported apps
@@ -56,7 +57,7 @@ AppDeck is signed ad hoc, not with a Developer ID, and is not notarized. On firs
 ## Quick start
 
 1. **＋ Add app** in the sidebar and choose `ChatGPT.app`, `Claude.app` or another supported app.
-2. Create a profile per account with **＋ Profile**. For Codex, **Shared settings → Connect Codex…** keeps your current Codex as the primary profile and lets the others share its workspace.
+2. Create a profile per account with **New profile**. For Codex, **Shared settings → Connect Codex…** keeps your current Codex as the primary profile and lets the others share its workspace.
 3. **Launch** a profile and sign in inside its window. Sign in to one new account at a time.
 4. Turn on **Account limits…** to see what every account has left, and press <kbd>⌃</kbd><kbd>⌥</kbd><kbd>Space</kbd> to switch from anywhere.
 
