@@ -7,7 +7,7 @@
 **Several accounts of the same Mac app, side by side — one window per account, one shared workspace.**
 
 [![CI](https://github.com/veniameen/AppDeck/actions/workflows/ci.yml/badge.svg)](https://github.com/veniameen/AppDeck/actions/workflows/ci.yml)
-[![Version 0.11.0](https://img.shields.io/badge/version-0.11.0-222222)](CHANGELOG.md)
+[![Version 0.12.0](https://img.shields.io/badge/version-0.12.0-222222)](CHANGELOG.md)
 ![macOS 13+](https://img.shields.io/badge/macOS-13%2B-111111?logo=apple)
 ![Universal](https://img.shields.io/badge/Apple%20Silicon%20%2B%20Intel-universal-555555)
 ![C++17 · AppKit](https://img.shields.io/badge/C%2B%2B17-AppKit-00599C?logo=cplusplus)
@@ -19,7 +19,7 @@
 
 AppDeck is a small native macOS app for people who work in the same desktop app under several accounts — typically [Codex](https://openai.com/codex/) (`ChatGPT.app`) or [Claude Desktop](https://claude.ai/download) with a personal and a work subscription. Every profile is an ordinary window of the original app with its own sign-in. AppDeck launches them, keeps their data apart, shows how much of each account's usage limit is left and lets you switch between them from anywhere.
 
-**New in 0.11:** a complete redesign ("Graphite glass"), a new icon, a floating side panel and cards that fit English and Russian labels. See the [changelog](CHANGELOG.md).
+**New in 0.12:** a proxy per profile or for all of them — HTTP or SOCKS5 with a login, through a private local bridge — and a simpler Add app dialog. See the [changelog](CHANGELOG.md).
 
 ## Features
 

@@ -5,7 +5,7 @@
 #include "proxy_policy.hpp"
 using namespace mac;
 namespace {
-constexpr const char* VERSION="0.11.0";
+constexpr const char* VERSION="0.12.0";
 void* appKit=nullptr;
 Obj app=nullptr,window=nullptr,controller=nullptr,rootView=nullptr;
 Obj state=nullptr,apps=nullptr,profiles=nullptr,projects=nullptr,selected=nullptr;

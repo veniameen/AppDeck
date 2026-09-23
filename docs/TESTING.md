@@ -28,17 +28,19 @@ No check signs in to an account, sends a model turn or opens a real profile's da
 
 Why the self-test replays events inside the app: on macOS 26 mouse events posted to another process (`CGEventPostToPid`) are dropped, and posting to the system event stream would move the user's pointer. The self-test therefore covers everything from `-[NSApplication sendEvent:]` on; a real pointer or trackpad gesture is part of the manual checklist.
 
-## Status of 0.11.0
+## Status of 0.12.0
 
 Verified on macOS 26.2, Apple Silicon, Apple clang 17:
 
-- `APPDECK_GUI_SELFTEST=1 make verify` passed: 602 localized string pairs; core 273, edge 485 417, workspace filter 68, usage 1 469, project sync 44 and automation sync 80 assertions; the static bundle check for both slices; native project import/update/delete and 188 group-sync assertions against Codex's `app-server`; API and Accessibility smoke tests; a signed-out `get_usage` exchange with Claude Code; the side panel self-test (17 checks) on arm64 and x86_64 in English and Russian.
+- `APPDECK_GUI_SELFTEST=1 make verify` passed: 677 localized string pairs; core 273, edge 485 417, workspace filter 68, usage 1 469, proxy 157, project sync 44 and automation sync 80 assertions; the proxy bridge against offline fixtures (75 checks, also on x86_64 under Rosetta and once with AddressSanitizer/UndefinedBehaviorSanitizer); the static bundle check for both slices; native project import/update/delete and 188 group-sync assertions against Codex's `app-server`; API and Accessibility smoke tests; a signed-out `get_usage` exchange with Claude Code; the side panel self-test (17 checks) on arm64 and x86_64 in English and Russian.
 - The redesign was checked against the design canvas in the running app with demo data (`tools/make_demo_data.py`), over a neutral wallpaper: every main-window page in English and the Claude group in Russian, the side panel in both languages, labels at the default window size with nothing truncated, the traffic lights inside the sidebar pane, no control focused when the window opens. The installed build on real data, including a window restored from the frame 0.10 saved (it fills the window with no gap under the title bar).
 - `APPDECK_RENDER_DIR` renders of all pages and the side panel in both languages.
 - The new icon: every size of `AppDeck.icns` rendered at its own pixel size; 16 and 32 px decode correctly through AppKit.
+- Proxy end to end in a sandbox (`APPDECK_DATA_ROOT`, English and Russian): a real Codex profile launched through a local forwarding proxy with a login; every connection of the app (chatgpt.com, openai.com, Google services) went through it with the right credentials, a dead first address was skipped, the app carried the proxy switches and environment, the card showed “via …”, **Check** reported the working address, and the bridge exited with the window. An independent review of the bridge, the protocols and the integration was fixed before the release.
 
 Not verified yet:
 
+- A real provider proxy (HTTP or SOCKS5) and the primary window launched through a proxy (the sandbox test used an additional profile and a local proxy).
 - Pointer and trackpad gestures from real hardware (drag, momentum scrolling) and the ⌃⌥ shortcuts by real key presses.
 - Several different real accounts working at once with shared history; a scheduled automation firing after an owner change.
 - The account used by the Code tab of an additional Claude profile; a Claude Code meter signed in to a different account than its window.
