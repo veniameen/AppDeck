@@ -98,7 +98,8 @@ void usageApplyStrip(Obj ref,Obj p){
  double gap=n>2?16:24,colW=n?(width-gap*(n-1))/n:width;
  for(UInt i=0;i<usageShown;++i){Obj col=get(ref,i==0?"c0":i==1?"c1":"c2");bool on=i<n;for(const char* k:{"caption","value","track","reset"})usageHide(get(col,k),!on);if(!on)continue;
   Obj w=usageWindowAt(p,i);int left=usageRemaining(w);double x0=x+i*(colW+gap);bool rolled=usageResets(w)>0&&usageResets(w)<=nowUnix(),grey=stale||rolled;
-  Obj valueText=left<=0?str(T("used up","исчерпан")):n>2?formatInt(T("%ld%% left","ост. %ld %%"),(Int)left):formatInt(T("%ld%% left","осталось %ld %%"),(Int)left);
+  // Three windows share a row: the number alone (the bar already reads as what is left).
+  Obj valueText=left<=0?str(T("used up","исчерпан")):n>2?formatInt(T("%ld%%","%ld %%"),(Int)left):formatInt(T("%ld%% left","осталось %ld %%"),(Int)left);
   double valueW=measure(utf8(valueText),monoFont(12,.3))+8;if(valueW>colW)valueW=colW;
   send<void>(get(col,"value"),"setFrame:",rect(x0+colW-valueW,y-1,valueW,16));send<void>(get(col,"value"),"setStringValue:",valueText);
   send<void>(get(col,"caption"),"setFrame:",rect(x0,y,colW-valueW-6,14));send<void>(get(col,"caption"),"setStringValue:",usageTitle(w));kern(get(col,"caption"),.63);

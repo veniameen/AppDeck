@@ -650,16 +650,14 @@ void makeCard(Obj parent,Obj p,Rect frame,Int ordinal){
  kern(labelObj(c,get(p,"name"),rect(72,20,rx-72-8,20),15,ink(),.3),-.15);
  Obj dot=statusDot(c,rect(72,47,7,7));Obj st=label(c,T("Not running","Не запущен"),rect(85,42,rx-85-8,16),12,muted(),.23);
  panel(c,rect(20,76,inner,1),hairline(),0);
- // Facts. Codex: ACCOUNT shares the first limit column, SETTINGS and HISTORY split the second; other apps: three equal columns.
- const char* accountText=master?(codex?T("Current Codex","Текущий Codex"):T("Current sign-in","Текущий вход")):T("Separate sign-in","Отдельный вход");Obj accountLabel;
- if(codex){double half=(inner-24)/2,sub=(half-16)/2,x2=20+half+24;
-  accountLabel=cardFact(c,T("ACCOUNT","АККАУНТ"),accountText,20,half);
-  cardFact(c,T("SETTINGS","НАСТРОЙКИ"),master?T("Original","Оригинал"):truth(get(p,"share"))?T("From base","Из базы"):T("Local","Локальные"),x2,sub);
+ // Facts: ACCOUNT takes the first half (an address needs the room); the second half holds two short facts —
+ // SETTINGS and HISTORY for Codex, DATA and ADAPTER for other apps.
+ const char* accountText=master?(codex?T("Current Codex","Текущий Codex"):T("Current sign-in","Текущий вход")):T("Separate sign-in","Отдельный вход");
+ double half=(inner-24)/2,sub=(half-16)/2,x2=20+half+24;
+ Obj accountLabel=cardFact(c,T("ACCOUNT","АККАУНТ"),accountText,20,half);
+ if(codex){cardFact(c,T("SETTINGS","НАСТРОЙКИ"),master?T("Original","Оригинал"):truth(get(p,"share"))?T("From base","Из базы"):T("Local","Локальные"),x2,sub);
   cardFact(c,T("HISTORY","ИСТОРИЯ"),master?T("Original","Оригинал"):sharesHistory(p)?T("Shared","Общая"):T("Own","Своя"),x2+sub+16,sub);}
- else{double third=(inner-32)/3;
-  accountLabel=cardFact(c,T("ACCOUNT","АККАУНТ"),accountText,20,third);
-  cardFact(c,T("DATA","ДАННЫЕ"),master?T("Original","Оригинал"):T("Own folder","Своя папка"),20+third+16,third);
-  cardFact(c,T("ADAPTER","АДАПТЕР"),adapterTitle(a),20+(third+16)*2,third);}
+ else{cardFact(c,T("DATA","ДАННЫЕ"),master?T("Original","Оригинал"):T("Own folder","Своя папка"),x2,sub);cardFact(c,T("ADAPTER","АДАПТЕР"),adapterTitle(a),x2+sub+16,sub);}
  send<void>(accountLabel,"setLineBreakMode:",(Int)5);if(limits)put(ref,"account",accountLabel);
  if(limits)put(ref,"usage",usageStrip(c,20,148,inner,profileIndex(p)));
  // Actions: the main one as a glass capsule, the others as round icon buttons at the card's right edge.
@@ -1025,7 +1023,7 @@ int main(){
  // An empty unified toolbar only moves the traffic lights into the sidebar pane (inset 20, centred in a 52-pt bar).
  {Obj toolbar=send(send(cls("NSToolbar"),"alloc"),"initWithIdentifier:",str("AppDeckToolbar"));send<void>(toolbar,"setShowsBaselineSeparator:",false);
   send<void>(window,"setToolbar:",toolbar);drop(toolbar);send<void>(window,"setToolbarStyle:",(Int)3);} // NSWindowToolbarStyleUnified
- send<void>(window,"setTitle:",str("AppDeck"));send<void>(window,"setReleasedWhenClosed:",false);send<void>(window,"setMinSize:",Extent{1040,720});send<void>(window,"setDelegate:",controller);
+ send<void>(window,"setTitle:",str("AppDeck"));send<void>(window,"setReleasedWhenClosed:",false);send<void>(window,"setMinSize:",Extent{1120,720});send<void>(window,"setDelegate:",controller);
  send<void>(window,"setOpaque:",false);send<void>(window,"setBackgroundColor:",send(cls("NSColor"),"clearColor"));send<void>(window,"setFrameAutosaveName:",str("AppDeckMainWindow"));
  // The window is glass: a behind-window blur (HUD material, like the side panel) under every page; pages add their own veils.
  Obj glass=send(send(cls("NSVisualEffectView"),"alloc"),"initWithFrame:",rect(0,0,1180,780));send<void>(glass,"setMaterial:",(Int)13);send<void>(glass,"setBlendingMode:",(Int)0);
