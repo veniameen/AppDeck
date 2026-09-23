@@ -139,13 +139,24 @@ inline Size proxyRewriteHead(const char* head,Size n,const char* user,const char
 }
 // ---- SOCKS5 ----
 inline Size socksGreeting(bool auth,unsigned char* out,Size cap){if(cap<4)return 0;out[0]=5;if(auth){out[1]=2;out[2]=0;out[3]=2;return 4;}out[1]=1;out[2]=0;return 3;}
-// Chosen method (0 none, 2 login), 0xFF when the server accepts none, -1 when the reply is not complete.
-inline int socksMethod(const unsigned char* in,Size n){if(n<2)return -1;if(in[0]!=5)return 0xFF;return in[1];}
+// Chosen method (0 none, 2 login), 0xFF when a SOCKS5 server accepts none of ours, -2 when the reply is not
+// SOCKS5 at all (an HTTP or TLS server answering the greeting), -1 when it is not complete.
+inline int socksMethod(const unsigned char* in,Size n){if(n<2)return -1;if(in[0]!=5)return -2;return in[1];}
 inline Size socksAuth(const char* user,const char* pass,unsigned char* out,Size cap){
  Size u=length(user),p=length(pass);if(u<1||u>255||p>255||3+u+p>cap)return 0;out[0]=1;out[1]=(unsigned char)u;for(Size i=0;i<u;++i)out[2+i]=(unsigned char)user[i];
  out[2+u]=(unsigned char)p;for(Size i=0;i<p;++i)out[3+u+i]=(unsigned char)pass[i];return 3+u+p;
 }
-inline int socksAuthStatus(const unsigned char* in,Size n){if(n<2)return -1;return in[0]==1&&in[1]==0?0:1;}
+// Login result: 0 accepted, 1 rejected, -2 a refusal that is not a login reply, -1 not complete. The status
+// byte alone decides success, as in curl: RFC 1929 says version 1, but some servers answer 05 00. A nonzero
+// status counts as a rejected login only under version 1 or 5; with any other version byte it is a protocol error.
+inline int socksAuthStatus(const unsigned char* in,Size n){if(n<2)return -1;if(in[1]==0)return 0;return in[0]==1||in[0]==5?1:-2;}
+// Methods that may be sent again after an upstream stayed silent (RFC 9110 idempotent methods): the first
+// upstream may have passed the request on, so anything else waits for its answer instead.
+inline bool proxyIdempotent(const char* head,Size n){
+ static const char* const methods[]={"GET ","HEAD ","OPTIONS ","TRACE ","PUT ","DELETE "};
+ for(const char* m:methods){Size k=length(m);if(n>=k&&prefix(head,m))return true;}
+ return false;
+}
 inline bool proxyIPv4(const char* h,unsigned char ip[4]){unsigned part=0,dots=0,digits=0;for(const char* p=h;;++p){if(*p>='0'&&*p<='9'){part=part*10+(unsigned)(*p-'0');if(++digits>3||part>255)return false;}
   else if(*p=='.'||!*p){if(!digits||dots>3)return false;ip[dots++]=(unsigned char)part;part=0;digits=0;if(!*p)break;}else return false;}return dots==4;}
 // An IPv6 literal without brackets or zone ("2001:db8::1", "::ffff:1.2.3.4") as 16 bytes.
@@ -172,10 +183,15 @@ inline Size socksConnect(const char* host,unsigned port,unsigned char* out,Size 
  else{Size h=length(host);if(h<1||h>255||7+h>cap)return 0;out[3]=3;out[4]=(unsigned char)h;for(Size i=0;i<h;++i)out[5+i]=(unsigned char)host[i];used=5+h;} // names resolve at the proxy (socks5h)
  out[used]=(unsigned char)(port>>8);out[used+1]=(unsigned char)(port&255);return used+2;
 }
-// Reply to CONNECT: -1 while incomplete; otherwise its length, with code 0 for success.
+// Reply to CONNECT: -1 while incomplete; otherwise its length with code 0 for success, the server's REP code
+// (1-255) for a refusal, or -2 when it is not a SOCKS5 reply (version byte) or a success with an unknown ATYP.
+// A refusal is decided on its first two bytes: the tunnel ends there, so its address type does not matter.
 inline long socksReply(const unsigned char* in,Size n,int& code){
- code=-1;if(n<5)return -1;if(in[0]!=5){code=0xFF;return (long)n;}code=in[1];Size need;
- switch(in[3]){case 1:need=10;break;case 4:need=22;break;case 3:need=7+(Size)in[4];break;default:code=0xFF;return (long)n;}
- return n<need?-1:(long)need;
+ code=-1;if(n<2)return -1;
+ if(in[0]!=5){code=-2;return (long)n;}
+ if(in[1]!=0){code=in[1];return (long)n;}
+ if(n<5)return -1;Size need;
+ switch(in[3]){case 1:need=10;break;case 4:need=22;break;case 3:need=7+(Size)in[4];break;default:code=-2;return (long)n;}
+ if(n<need)return -1;code=0;return (long)need;
 }
 }

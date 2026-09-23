@@ -28,7 +28,7 @@ python3 tests/proxy_fixture.py "$WORK" > "$WORK/ports" 2> "$WORK/fixture.log" &
 PIDS+=($!)
 for _ in $(seq 100); do grep -q '^dead ' "$WORK/ports" 2>/dev/null && break; sleep 0.1; done
 port(){ awk -v k="$1" '$1==k{print $2}' "$WORK/ports"; }
-T=$(port target); T6=$(port target6); H=$(port http); S=$(port socks); SILENT=$(port silent); DEAD=$(port dead)
+T=$(port target); T6=$(port target6); H=$(port http); S=$(port socks); SILENT=$(port silent); DEAD=$(port dead); HANGUP=$(port hangup)
 [[ -n "$T" && -n "$DEAD" ]] || { cat "$WORK/fixture.log"; echo "FAIL: the proxy fixture did not start"; exit 1; }
 BODY='appdeck-proxy-target'
 seen(){ "${DCURL[@]}" "http://127.0.0.1:$T/stats" | python3 -c 'import json,sys;print(json.load(sys.stdin).get(sys.argv[1],0))' "$1"; }
@@ -53,6 +53,12 @@ finished(){ local start=$SECONDS; ( sleep "$2"; kill "$1" 2>/dev/null ) & local 
 run_check(){ local probe="$1"; shift; OUT=$(printf '%s\n' "$@" '' | APPDECK_PROXY_PROBE="$probe" "$BRIDGE" check 2>>"$WORK/check.err"); RC=$?; }
 same(){ [[ "$1" == "$2" ]]; }
 matches(){ [[ "$1" =~ $2 ]]; }
+get(){ "${PCURL[@]}" -x "http://127.0.0.1:$1" "http://127.0.0.1:$T/"; }        # a plain request through bridge port $1
+tunnel_get(){ "${PCURL[@]}" -p -x "http://127.0.0.1:$1" "http://127.0.0.1:$T/"; } # the same through a CONNECT tunnel
+
+# A bridge that gets its port line but no watch line: it must keep serving past the former 60 s limit
+# (AppDeck may sit in an alert between the two lines). Checked at the end of the run.
+start_bridge pending "scheme http" "endpoint 127.0.0.1 $H $UH $PH"; PENDING_PID=$BPID; PENDING_PORT=$BPORT; PENDING_AT=$SECONDS
 
 # ---- HTTP upstream ----
 start_bridge http "scheme http" "endpoint 127.0.0.1 $H $UH $PH"; watch http "$KEEP"; HTTP_PID=$BPID; HTTP_PORT=$BPORT
@@ -119,6 +125,25 @@ expect "SOCKS5 wrong password: tunnel gets 502" same "$("${PCURL[@]}" -p -x "htt
 start_bridge deadonly "scheme http" "endpoint 127.0.0.1 $DEAD - -"; watch deadonly "$KEEP"
 expect "no reachable upstream: 502" same "$("${PCURL[@]}" -x "http://127.0.0.1:$BPORT" -o /dev/null -w '%{http_code}' "http://127.0.0.1:$T/")" 502
 
+# Plain http:// requests fail over as tunnels do: each endpoint gets the head with its own login, and the
+# endpoint that answers is tried first next time.
+start_bridge plainfo "scheme http" "endpoint 127.0.0.1 $H $UH $WRONG" "endpoint 127.0.0.1 $H $UH $PH"; watch plainfo "$KEEP"
+B0=$(seen http_auth_bad)
+expect "plain failover: wrong login on endpoint 0, a plain request first (no tunnel before it) succeeds" same "$(get "$BPORT")/$(( $(seen http_auth_bad)-B0 ))" "$BODY/1"
+expect "plain failover: the next plain request and tunnel go straight to endpoint 1" same "$(get "$BPORT")$(tunnel_get "$BPORT")/$(( $(seen http_auth_bad)-B0 ))" "$BODY$BODY/1"
+start_bridge plainbody "scheme http" "endpoint 127.0.0.1 $H $UH $WRONG" "endpoint 127.0.0.1 $H $UH $PH"; watch plainbody "$KEEP"
+B0=$(seen http_auth_bad)
+CODE=$("${PCURL[@]}" -x "http://127.0.0.1:$BPORT" -H 'Expect:' --data-binary @"$WORK/big.bin" -o /dev/null -w '%{http_code}' "http://127.0.0.1:$T/echo")
+expect "plain failover: a 407 after the body started streaming gets 502 (the body cannot be sent again)" same "$CODE" 502
+expect "plain failover: after that 502 the next request starts at endpoint 1" same "$(get "$BPORT")/$(( $(seen http_auth_bad)-B0 ))" "$BODY/1"
+start_bridge plainsilent "scheme http" "endpoint 127.0.0.1 $SILENT $UH $PH" "endpoint 127.0.0.1 $H $UH $PH"; watch plainsilent "$KEEP"
+START=$SECONDS; GOT=$(get "$BPORT"); TOOK=$((SECONDS-START))
+expect "plain failover: silent endpoint 0, the request succeeds on endpoint 1 after the 10 s limit (${TOOK}s)" same "$GOT/$(( TOOK >= 9 && TOOK <= 13 ))" "$BODY/1"
+START=$SECONDS; GOT=$(get "$BPORT"); TOOK=$((SECONDS-START))
+expect "plain failover: the next request goes straight to endpoint 1 (${TOOK}s)" same "$GOT/$(( TOOK <= 2 ))" "$BODY/1"
+start_bridge plainhangup "scheme http" "endpoint 127.0.0.1 $HANGUP - -" "endpoint 127.0.0.1 $H $UH $PH"; watch plainhangup "$KEEP"
+expect "plain failover: an endpoint that hangs up without an answer is skipped" same "$(get "$BPORT")" "$BODY"
+
 # ---- check ----
 run_check "127.0.0.1:$T" "scheme http" "endpoint 127.0.0.1 $H $UH $PH"
 expect "check, HTTP upstream: ok 0 <ms> ($OUT)" matches "$OUT/$RC" '^ok 0 [0-9]+/0$'
@@ -138,6 +163,21 @@ run_check "192.0.2.1:443" "scheme http" "endpoint 127.0.0.1 $H $UH $PH"
 expect "check, upstream refuses the target: fail 0 status-403" same "$OUT/$RC" "fail 0 status-403/1"
 run_check "192.0.2.1:443" "scheme socks5" "endpoint 127.0.0.1 $S $UH $PH"
 expect "check, SOCKS5 refuses the target: fail 0 socks-2" same "$OUT/$RC" "fail 0 socks-2/1"
+# Only a SOCKS5 server's own answers are login problems; anything else on a SOCKS port is a protocol error.
+run_check "127.0.0.1:$T" "scheme socks5" "endpoint 127.0.0.1 $(port http400) $UH $PH"
+expect "check, SOCKS5 greeting answered by an HTTP server: fail 0 protocol, not auth" same "$OUT/$RC" "fail 0 protocol/1"
+run_check "127.0.0.1:$T" "scheme socks5" "endpoint 127.0.0.1 $(port tlsalert) - -"
+expect "check, SOCKS5 greeting answered with a TLS alert: fail 0 protocol" same "$OUT/$RC" "fail 0 protocol/1"
+run_check "127.0.0.1:$T" "scheme socks5" "endpoint 127.0.0.1 $(port socksgss) $UH $PH"
+expect "check, SOCKS5 server picks a method never offered: fail 0 protocol" same "$OUT/$RC" "fail 0 protocol/1"
+run_check "127.0.0.1:$T" "scheme socks5" "endpoint 127.0.0.1 $(port socksinsist) - -"
+expect "check, SOCKS5 server insists on a login none is configured for: auth 0" same "$OUT/$RC" "auth 0/1"
+run_check "127.0.0.1:$T" "scheme socks5" "endpoint 127.0.0.1 $(port socksv5auth) $UH $PH"
+expect "check, SOCKS5 login accepted with version byte 5 (as curl accepts it): ok 0 ($OUT)" matches "$OUT/$RC" '^ok 0 [0-9]+/0$'
+run_check "127.0.0.1:$T" "scheme socks5" "endpoint 127.0.0.1 $(port socksauthodd) $UH $PH"
+expect "check, SOCKS5 login answered with garbage: fail 0 protocol" same "$OUT/$RC" "fail 0 protocol/1"
+run_check "127.0.0.1:$T" "scheme socks5" "endpoint 127.0.0.1 $(port socksrep4) - -"
+expect "check, SOCKS5 refusal with an unknown address type: fail 0 socks-4" same "$OUT/$RC" "fail 0 socks-4/1"
 START=$SECONDS; run_check "127.0.0.1:$T" "scheme socks5" "endpoint 127.0.0.1 $SILENT $UH $PH"
 expect "check, silent upstream: fail 0 timeout after the 10 s handshake limit" same "$OUT/$RC/$(( SECONDS-START >= 9 && SECONDS-START <= 13 ))" "fail 0 timeout/1/1"
 
@@ -170,6 +210,10 @@ start_bridge nowatch "scheme http" "endpoint 127.0.0.1 $H $UH $PH"; send nowatch
 expect "exits 0 when stdin closes before the watch line (${ELAPSED}s)" same "$RC/$(( ELAPSED <= 3 ))/$(cat "$WORK/nowatch.out")" "0/1/port $BPORT"
 start_bridge badwatch "scheme http" "endpoint 127.0.0.1 $H $UH $PH"; send badwatch "watch me"$'\n'; touch "$WORK/badwatch.eof"; finished "$BPID" 5
 expect "exits 2 on a malformed watch line" same "$RC" 2
+while (( SECONDS-PENDING_AT < 62 )); do sleep 1; done
+expect "no watch line $((SECONDS-PENDING_AT)) s after the port line: still serving" same "$(kill -0 "$PENDING_PID" && get "$PENDING_PORT")" "$BODY"
+send pending ""; touch "$WORK/pending.eof"; finished "$PENDING_PID" 5
+expect "then exits 0 at once when stdin closes (${ELAPSED}s)" same "$RC/$(( ELAPSED <= 2 ))" "0/1"
 
 # ---- no secrets anywhere ----
 LEAK=0; for f in "$WORK"/*.err "$WORK"/*.out; do grep -aqF -e "$PH" -e "$UH" -e "w0rd" "$f" && LEAK=1; done

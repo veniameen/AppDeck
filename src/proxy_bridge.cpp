@@ -10,8 +10,9 @@
 //   scheme http|socks5
 //   endpoint <host> <port> <user-hex|-> <pass-hex|->    1-32 lines, in failover order; hex of UTF-8 bytes
 //   <empty line>                                        (end of input also ends it)
-// appdeck-proxy serve  prints "port <n>" and closes stdout, then expects "watch <pid>" within 60 s and
-//                      serves until that process exits. Stdin is ignored after the watch line.
+// appdeck-proxy serve  prints "port <n>" and closes stdout, then waits for "watch <pid>" without a time limit
+//                      (AppDeck may sit in an alert between the two lines; the end of stdin still ends the
+//                      bridge) and serves until that process exits. Stdin is ignored after the watch line.
 // appdeck-proxy check  opens a tunnel to api.openai.com:443 (APPDECK_PROXY_PROBE=host:port in tests)
 //                      through each endpoint in turn and prints "ok <i> <ms>", "auth <i>" or
 //                      "fail <i> <reason>". Exit 0 when any endpoint is ok, else 1.
@@ -39,14 +40,14 @@
 namespace {
 using deck::Size;
 constexpr int maxEndpoints=32,maxClients=512,maxAddresses=4;
-constexpr int connectMs=6000,handshakeMs=10000,headMs=30000,replyMs=5000,watchMs=60000,configMs=60000;
+constexpr int connectMs=6000,handshakeMs=10000,headMs=30000,replyMs=5000,configMs=60000;
 constexpr int halfClosedMs=300000; // a tunnel with one direction finished closes after 5 idle minutes
 constexpr Size headCap=16384,relayCap=32768,lineCap=4096;
 
 deck::ProxyScheme gScheme=deck::ProxyScheme::Http;
 deck::ProxyEndpoint gEndpoints[maxEndpoints];
 int gCount=0;
-int gLast=0;    // the endpoint that last opened a tunnel (atomic access)
+int gLast=0;    // the endpoint that last opened a tunnel or answered a plain request (atomic access)
 int gClients=0; // connections being served (atomic access)
 
 const char badRequest[]="HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
@@ -85,7 +86,7 @@ long recvSome(int fd,void* buf,Size cap,long long deadline){
 // ---- stdin lines ----
 struct LineIn{char buf[8192];Size have;bool eof;};
 LineIn gIn;
-// 1 line (without "\r\n"), 0 end of input, -1 deadline passed, -2 line too long.
+// 1 line (without "\r\n"), 0 end of input, -1 deadline passed, -2 line too long. A negative deadline waits forever.
 int readLine(char* out,Size cap,long long deadline){
  for(;;){
   for(Size i=0;i<gIn.have;++i)if(gIn.buf[i]=='\n'){
@@ -93,7 +94,7 @@ int readLine(char* out,Size cap,long long deadline){
    memmove(gIn.buf,gIn.buf+i+1,gIn.have-i-1);gIn.have-=i+1;return 1;}
   if(gIn.eof){if(!gIn.have)return 0;Size n=gIn.have;if(n>=cap)return -2;memcpy(out,gIn.buf,n);out[n]=0;gIn.have=0;return 1;}
   if(gIn.have==sizeof gIn.buf)return -2;
-  pollfd p={0,POLLIN,0};int r=poll(&p,1,leftMs(deadline));
+  pollfd p={0,POLLIN,0};int r=poll(&p,1,deadline<0?-1:leftMs(deadline));
   if(r==0)return -1;if(r<0&&errno==EINTR)continue;
   ssize_t got=r<0?-1:read(0,gIn.buf+gIn.have,sizeof gIn.buf-gIn.have);
   if(got>0)gIn.have+=(Size)got;else if(got<0&&(errno==EINTR||errno==EAGAIN))continue;else gIn.eof=true;
@@ -181,17 +182,22 @@ Outcome socksTunnel(int fd,const deck::ProxyEndpoint& ep,const char* host,unsign
  int s=sendAll(fd,msg,n,deadline);if(s<=0)return {s==0?Why::Timeout:Why::Protocol,0};
  long r=fill(fd,in,2,deadline);if(r!=1)return failed(r);
  int method=deck::socksMethod(in.buf,in.have);take(in,2);
- if(method==0xFF)return {Why::Auth,0}; // none of our methods: it wants a login we do not have
- if(method==2&&login){
+ // Only a SOCKS5 server's own answers count as a login problem: 05 FF (none of our methods, so it wants a
+ // login we do not have), a login demanded although none is configured, or a rejected login. A reply that
+ // is not SOCKS5 (an HTTP or TLS server on that port) or a method we never offered is a protocol error.
+ if(method==0xFF)return {Why::Auth,0};
+ if(method==2){
+  if(!login)return {Why::Auth,0};
   n=deck::socksAuth(ep.user,ep.pass,msg,sizeof msg);if(!n)return {Why::Protocol,0};
   s=sendAll(fd,msg,n,deadline);wipe(msg,sizeof msg);if(s<=0)return {s==0?Why::Timeout:Why::Protocol,0};
   r=fill(fd,in,2,deadline);if(r!=1)return failed(r);
-  int status=deck::socksAuthStatus(in.buf,in.have);take(in,2);if(status!=0)return {Why::Auth,0};
+  int status=deck::socksAuthStatus(in.buf,in.have);take(in,2);
+  if(status==1)return {Why::Auth,0};if(status!=0)return {Why::Protocol,0};
  }else if(method!=0)return {Why::Protocol,0};
  n=deck::socksConnect(host,port,msg,sizeof msg);if(!n)return {Why::Protocol,0};
  s=sendAll(fd,msg,n,deadline);if(s<=0)return {s==0?Why::Timeout:Why::Protocol,0};
  for(;;){int code;long len=deck::socksReply(in.buf,in.have,code);
-  if(len>0){if(code==0){take(in,(Size)len);return {Why::Ok,0};}return {code==0xFF?Why::Protocol:Why::Socks,code};}
+  if(len>0){if(code==0){take(in,(Size)len);return {Why::Ok,0};}return code<0?Outcome{Why::Protocol,0}:Outcome{Why::Socks,code};}
   r=fill(fd,in,in.have+1,deadline);if(r!=1)return failed(r);}
 }
 // A tunnel to host:port through endpoint i: the socket, or -1 with the reason in `out`.
@@ -208,13 +214,6 @@ int tunnel(const char* host,unsigned port,Inbox& in){
  for(int k=0;k<gCount;++k){int i=(first+k)%gCount;Outcome o;int fd=tunnelVia(i,host,port,in,o);if(fd>=0){__atomic_store_n(&gLast,i,__ATOMIC_RELAXED);return fd;}}
  return -1;
 }
-// A plain TCP connection to the first reachable HTTP upstream (absolute-form requests); `which` gets its index.
-int dialAny(int& which){
- int first=__atomic_load_n(&gLast,__ATOMIC_RELAXED);
- for(int k=0;k<gCount;++k){int i=(first+k)%gCount;Why why;int fd=dial(gEndpoints[i].host,gEndpoints[i].port,why);if(fd>=0){which=i;return fd;}}
- return -1;
-}
-
 // ---- one app connection ----
 struct Session{char head[headCap];Inbox up;char flow[2][relayCap];Size off[2],len[2];};
 bool preload(Session& s,int d,const void* data,Size n){if(s.off[d]+s.len[d]+n>relayCap)return false;memcpy(s.flow[d]+s.off[d]+s.len[d],data,n);s.len[d]+=n;return true;}
@@ -224,39 +223,80 @@ void finish(int c,const char* answer){
  char sink[4096];long long deadline=nowMs()+2000;for(int k=0;k<64&&recvSome(c,sink,sizeof sink,deadline)>0;++k){}
  close(c);
 }
+// A plain http:// request on its way through an HTTP upstream: the upstream's first response head is held
+// back from the app until it is complete, so that a 407 (wrong upstream login) or an upstream that does not
+// answer can still send the request elsewhere. `resend` holds while the upstream has been given nothing but
+// the preloaded head and early bytes (nothing more has been read from the app): only then can the request
+// go to another endpoint unchanged. `deadline` (-1: none) is when silence counts as a failed endpoint.
+struct FirstHead{int endpoint;long long deadline;bool repeatable,resend;};
+enum class Relayed{Done,Retry}; // Retry: the upstream is closed; the app connection is open and has been sent nothing
 // Copies both ways until both sides are finished; the end of one direction is passed on as a half-close.
-// Direction 0 goes app -> upstream, 1 upstream -> app. firstHead holds the upstream's first response head
-// back from the app and turns a 407 (wrong upstream login) into 502, as for tunnels.
-void relay(Session& s,int c,int u,bool firstHead){
- int fd[2]={c,u};bool eof[2]={false,false},shut[2]={false,false},broken=false;
+// Direction 0 goes app -> upstream, 1 upstream -> app. With `first`, the upstream's first answer is judged:
+//  - a 407 goes back as Retry while `resend` holds; otherwise the app gets 502 and the next request starts
+//    at the following endpoint;
+//  - for a request that may be repeated (and while `resend` holds), no head by the deadline, or an upstream
+//    that closes or fails without a byte of answer, goes back as Retry;
+//  - any other complete head makes this endpoint the one tried first next time.
+Relayed relay(Session& s,int c,int u,FirstHead* first){
+ int fd[2]={c,u};bool eof[2]={false,false},shut[2]={false,false},broken=false,upBroken=false;
  while(!(shut[0]&&shut[1])){
   pollfd p[2];
   for(int k=0;k<2;++k){p[k].fd=-1;p[k].events=0;p[k].revents=0;}
   for(int d=0;d<2;++d){
    if(!eof[d]&&s.off[d]+s.len[d]<relayCap)p[d].events|=POLLIN;
-   if(s.len[d]&&!(d==1&&firstHead))p[1-d].events|=POLLOUT;
+   if(s.len[d]&&!(d==1&&first))p[1-d].events|=POLLOUT;
   }
   for(int k=0;k<2;++k)if(p[k].events)p[k].fd=fd[k]; // no interest, no wakeups (a hung-up socket would spin)
-  int r=poll(p,2,shut[0]||shut[1]?halfClosedMs:-1);
+  bool timed=first&&first->deadline>=0;int wait=shut[0]||shut[1]?halfClosedMs:-1;
+  if(timed){int left=leftMs(first->deadline);if(wait<0||left<wait)wait=left;}
+  int r=poll(p,2,wait);
   if(r<0){if(errno==EINTR)continue;broken=true;break;}
-  if(r==0){broken=true;break;}
+  if(r==0&&!timed){broken=true;break;}
   for(int k=0;k<2&&!broken;++k){
    short rv=p[k].revents;if(rv&POLLNVAL){broken=true;break;}
    if((p[k].events&POLLIN)&&(rv&(POLLIN|POLLHUP|POLLERR))){int d=k;
     ssize_t n=read(fd[k],s.flow[d]+s.off[d]+s.len[d],relayCap-s.off[d]-s.len[d]);
-    if(n>0)s.len[d]+=(Size)n;else if(n==0)eof[d]=true;else if(errno!=EAGAIN&&errno!=EINTR)broken=true;}
+    if(n>0){s.len[d]+=(Size)n;if(d==0&&first){first->resend=false;first->deadline=-1;}} // the app's body is on its way now
+    else if(n==0)eof[d]=true;else if(errno!=EAGAIN&&errno!=EINTR){broken=true;upBroken=k==1;}}
    if(!broken&&(p[k].events&POLLOUT)&&(rv&(POLLOUT|POLLHUP|POLLERR))){int d=1-k;
     ssize_t n=write(fd[k],s.flow[d]+s.off[d],s.len[d]);
-    if(n>0){s.off[d]+=(Size)n;s.len[d]-=(Size)n;if(!s.len[d])s.off[d]=0;}else if(n<0&&errno!=EAGAIN&&errno!=EINTR)broken=true;}
+    if(n>0){s.off[d]+=(Size)n;s.len[d]-=(Size)n;if(!s.len[d])s.off[d]=0;}else if(n<0&&errno!=EAGAIN&&errno!=EINTR){broken=true;upBroken=k==1;}}
+  }
+  if(first&&(!broken||upBroken)){
+   const char* h=s.flow[1]+s.off[1];Size end=deck::httpHeadEnd(h,s.len[1]);int status=end?deck::httpStatus(h,end):-1;
+   bool gone=!s.len[1]&&(eof[1]||upBroken);                       // closed or failed without a byte of answer
+   bool late=!end&&first->deadline>=0&&nowMs()>=first->deadline;  // silent past the deadline
+   if(status==407){
+    abortive(u);close(u);if(first->resend)return Relayed::Retry;
+    __atomic_store_n(&gLast,(first->endpoint+1)%gCount,__ATOMIC_RELAXED); // the next request skips this endpoint
+    finish(c,badGateway);return Relayed::Done;}
+   if((gone||late)&&first->repeatable&&first->resend){abortive(u);close(u);return Relayed::Retry;}
+   if(end){__atomic_store_n(&gLast,first->endpoint,__ATOMIC_RELAXED);first=nullptr;}
+   else if(eof[1]||upBroken||s.off[1]+s.len[1]==relayCap)first=nullptr; // no head to judge: pass on what came
   }
   if(broken)break;
-  if(firstHead){Size end=deck::httpHeadEnd(s.flow[1]+s.off[1],s.len[1]);
-   if(end&&deck::httpStatus(s.flow[1]+s.off[1],end)==407){abortive(u);close(u);finish(c,badGateway);return;}
-   if(end||eof[1]||s.off[1]+s.len[1]==relayCap)firstHead=false;}
   for(int d=0;d<2;++d)if(eof[d]&&!s.len[d]&&!shut[d]){shutdown(fd[1-d],SHUT_WR);shut[d]=true;}
  }
  if(broken){abortive(c);abortive(u);} // pass a failure on as a reset, not as a clean end
- close(c);close(u);
+ close(c);close(u);return Relayed::Done;
+}
+// A plain http:// request through the HTTP upstreams, in failover order from the endpoint that worked last.
+// The head is rewritten with each endpoint's own login. Until an upstream answers, the request moves on
+// after a 407, and, for a request that may be repeated, after 10 s of silence or a connection closed without
+// an answer. The last endpoint in the order has no deadline: a slow origin gets all the time it needs there.
+void plainHttp(Session& s,int c,Size end,const char* early,Size earlyLen){
+ bool repeatable=deck::proxyIdempotent(s.head,end);int first=__atomic_load_n(&gLast,__ATOMIC_RELAXED);
+ for(int k=0;k<gCount;++k){int i=(first+k)%gCount;const deck::ProxyEndpoint& ep=gEndpoints[i];
+  Why why;int u=dial(ep.host,ep.port,why);if(u<0)continue;
+  s.off[0]=s.off[1]=s.len[0]=s.len[1]=0;
+  Size n=deck::proxyRewriteHead(s.head,end,ep.user,ep.pass,false,s.flow[0],relayCap);
+  if(!n){wipe(s.flow[0],relayCap);close(u);finish(c,badRequest);return;}
+  s.len[0]=n;
+  if(!preload(s,0,early,earlyLen)){wipe(s.flow[0],relayCap);close(u);finish(c,badGateway);return;}
+  FirstHead f={i,repeatable&&k<gCount-1?nowMs()+handshakeMs:-1,repeatable,true};
+  if(relay(s,c,u,&f)==Relayed::Done)return;
+ }
+ wipe(s.flow[0],relayCap);finish(c,badGateway);
 }
 void handle(int c,Session& s){
  nonBlocking(c);tune(c);s.off[0]=s.off[1]=s.len[0]=s.len[1]=0;s.up.have=0;
@@ -269,17 +309,16 @@ void handle(int c,Session& s){
  if(req.connect){
   int u=tunnel(req.host,req.port,s.up);if(u<0){finish(c,badGateway);return;}
   if(!preload(s,1,established,sizeof established-1)||!preload(s,1,s.up.buf,s.up.have)||!preload(s,0,early,earlyLen)){abortive(u);close(u);finish(c,badGateway);return;}
-  relay(s,c,u,false);return;
+  relay(s,c,u,nullptr);return;
  }
- int u,which=0;bool socks=gScheme==deck::ProxyScheme::Socks5;
- if(socks)u=tunnel(req.host,req.port,s.up);else u=dialAny(which);
- if(u<0){finish(c,badGateway);return;}
- const deck::ProxyEndpoint& ep=gEndpoints[which];
- Size n=deck::proxyRewriteHead(s.head,end,socks?nullptr:ep.user,socks?nullptr:ep.pass,socks,s.flow[0],relayCap);
- if(!n){wipe(s.flow[0],relayCap);close(u);finish(c,badRequest);return;}
+ if(gScheme!=deck::ProxyScheme::Socks5){plainHttp(s,c,end,early,earlyLen);return;}
+ // Through SOCKS5 the tunnel handshake already chose a working endpoint; the request goes in origin form.
+ int u=tunnel(req.host,req.port,s.up);if(u<0){finish(c,badGateway);return;}
+ Size n=deck::proxyRewriteHead(s.head,end,nullptr,nullptr,true,s.flow[0],relayCap);
+ if(!n){close(u);finish(c,badRequest);return;}
  s.len[0]=n;
- if(!preload(s,0,early,earlyLen)||!preload(s,1,s.up.buf,s.up.have)){wipe(s.flow[0],relayCap);close(u);finish(c,badGateway);return;}
- relay(s,c,u,!socks);
+ if(!preload(s,0,early,earlyLen)||!preload(s,1,s.up.buf,s.up.have)){close(u);finish(c,badGateway);return;}
+ relay(s,c,u,nullptr);
 }
 void* serveClient(void* arg){
  int c=(int)(intptr_t)arg;Session* s=(Session*)malloc(sizeof(Session));
@@ -319,10 +358,11 @@ int serve(){
  char line[64];int n=snprintf(line,sizeof line,"port %u\n",(unsigned)ntohs(a.sin_port));
  if(!writeAll(1,line,(Size)n))return 1;
  devNull(1); // the manager's reader sees the end of stdout right after the port
- long long deadline=nowMs()+watchMs;
+ // No time limit for the watch line: AppDeck may be held up between the two lines (an alert, a slow launch),
+ // and a window may already point at this port. A manager that goes away closes stdin.
  for(;;){
-  int r=readLine(line,sizeof line,deadline);
-  if(r==0||r==-1)_exit(0); // stdin closed or no watch in time: nobody needs this bridge
+  int r=readLine(line,sizeof line,-1);
+  if(r==0)_exit(0); // stdin closed before the watch line: nobody needs this bridge
   if(r==1&&!line[0])continue;
   char* tok[3];int k=r==1?split(line,tok,2):0;char* e=nullptr;long pid=k==2&&!strcmp(tok[0],"watch")?strtol(tok[1],&e,10):0;
   if(pid<=0||pid>INT32_MAX||!e||*e){fputs("appdeck-proxy: expected \"watch <pid>\"\n",stderr);_exit(2);}

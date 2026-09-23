@@ -58,10 +58,17 @@ int main(){
  {const char* up="GET http://h/ HTTP/1.1\r\nUpgrade: websocket\r\n\r\n";check(!deck::proxyUpgrade(up,std::strlen(up)));} // Upgrade alone is not a request to upgrade
  // SOCKS5.
  unsigned char s[600];check(deck::socksGreeting(true,s,sizeof s)==4&&s[0]==5&&s[1]==2&&s[2]==0&&s[3]==2);check(deck::socksGreeting(false,s,sizeof s)==3&&s[1]==1&&s[2]==0);
- const unsigned char m2[]={5,2},mff[]={5,0xFF},bad4[]={4,0};check(deck::socksMethod(m2,1)==-1&&deck::socksMethod(m2,2)==2&&deck::socksMethod(mff,2)==0xFF&&deck::socksMethod(bad4,2)==0xFF);
+ const unsigned char m2[]={5,2},m0[]={5,0},mff[]={5,0xFF},mgss[]={5,1},bad4[]={4,0},httpAnswer[]={'H','T'},tlsAlert[]={0x15,3};
+ check(deck::socksMethod(m2,1)==-1&&deck::socksMethod(m2,2)==2&&deck::socksMethod(m0,2)==0&&deck::socksMethod(mff,2)==0xFF);
+ check(deck::socksMethod(mgss,2)==1); // a method never offered: the bridge calls it a protocol error
+ // Not SOCKS5 at all (SOCKS4, an HTTP server's "HTTP/1.1 400", a TLS alert): -2, never "no acceptable method".
+ check(deck::socksMethod(bad4,2)==-2&&deck::socksMethod(httpAnswer,2)==-2&&deck::socksMethod(tlsAlert,2)==-2);
  n=deck::socksAuth("alice","s3cr3t",s,sizeof s);check(n==14&&s[0]==1&&s[1]==5&&!std::memcmp(s+2,"alice",5)&&s[7]==6&&!std::memcmp(s+8,"s3cr3t",6));
  check(deck::socksAuth("","x",s,sizeof s)==0);{std::string u(256,'u');check(deck::socksAuth(u.c_str(),"x",s,sizeof s)==0);}
- const unsigned char okA[]={1,0},noA[]={1,1};check(deck::socksAuthStatus(okA,1)==-1&&deck::socksAuthStatus(okA,2)==0&&deck::socksAuthStatus(noA,2)==1);
+ const unsigned char okA[]={1,0},noA[]={1,1},ok5[]={5,0},no5[]={5,1},okOdd[]={0x48,0},noOdd[]={0x48,0x54};
+ check(deck::socksAuthStatus(okA,1)==-1&&deck::socksAuthStatus(okA,2)==0&&deck::socksAuthStatus(noA,2)==1);
+ check(deck::socksAuthStatus(ok5,2)==0&&deck::socksAuthStatus(no5,2)==1); // version 5 instead of 1: accepted as curl does
+ check(deck::socksAuthStatus(okOdd,2)==0&&deck::socksAuthStatus(noOdd,2)==-2); // the status byte decides; other versions never mean a wrong login
  n=deck::socksConnect("api.openai.com",443,s,sizeof s);check(n==7+14&&s[0]==5&&s[1]==1&&s[3]==3&&s[4]==14&&!std::memcmp(s+5,"api.openai.com",14)&&s[19]==1&&s[20]==0xBB);
  n=deck::socksConnect("10.0.0.2",80,s,sizeof s);check(n==10&&s[3]==1&&s[4]==10&&s[7]==2&&s[8]==0&&s[9]==80);
  for(const char* ip:{"256.1.1.1","1.2.3","1.2.3.4.5","1..2.3","01234.1.1.1"}){n=deck::socksConnect(ip,80,s,sizeof s);check(n>0&&s[3]==3);} // not an IPv4 literal: sent as a name
@@ -77,7 +84,17 @@ int main(){
  int code;const unsigned char rep4[]={5,0,0,1,1,2,3,4,0,80},repName[]={5,0,0,3,3,'a','b','c',1,187},rep6[22]={5,0,0,4},fail[]={5,5,0,1,0,0,0,0,0,0};
  check(deck::socksReply(rep4,4,code)==-1);check(deck::socksReply(rep4,9,code)==-1);check(deck::socksReply(rep4,10,code)==10&&code==0);
  check(deck::socksReply(repName,10,code)==10&&code==0);check(deck::socksReply(rep6,22,code)==22&&code==0);check(deck::socksReply(fail,10,code)==10&&code==5);
- const unsigned char junk[]={4,0,0,1,0};check(deck::socksReply(junk,5,code)>0&&code==0xFF);
+ check(deck::socksReply(fail,1,code)==-1&&code==-1);check(deck::socksReply(fail,2,code)==2&&code==5); // a refusal needs only its first two bytes
+ const unsigned char refusedOdd[]={5,4,0,9},refused255[]={5,0xFF,0,1},okOdd4[]={5,0,0,9,0},junk[]={4,0,0,1,0},httpReply[]={'H','T','T','P','/'};
+ check(deck::socksReply(refusedOdd,4,code)==4&&code==4);   // REP 4 with an unknown ATYP is still socks-4
+ check(deck::socksReply(refused255,4,code)==4&&code==255); // REP 255 is a server's code, not a protocol marker
+ check(deck::socksReply(okOdd4,5,code)==5&&code==-2);      // success with an unknown ATYP: its end is unknown
+ check(deck::socksReply(junk,5,code)>0&&code==-2);check(deck::socksReply(httpReply,5,code)==5&&code==-2); // not SOCKS5
+ check(deck::socksReply(m0,2,code)==-1&&deck::socksReply(rep4,4,code)==-1); // a success waits for its whole address
+ // Methods that may go to another upstream after silence.
+ for(const char* yes:{"GET http://h/ HTTP/1.1\r\n\r\n","HEAD http://h/ HTTP/1.1","OPTIONS * HTTP/1.1","TRACE / HTTP/1.1","PUT /x HTTP/1.1","DELETE /x HTTP/1.1"})check(deck::proxyIdempotent(yes,std::strlen(yes)));
+ for(const char* no:{"POST http://h/ HTTP/1.1","PATCH /x HTTP/1.1","get / HTTP/1.1","GETX / HTTP/1.1","CONNECT h:443 HTTP/1.1","GET",""})check(!deck::proxyIdempotent(no,std::strlen(no)));
+ check(!deck::proxyIdempotent("GET / HTTP/1.1",3)); // only the bytes it is given
  // Scheme names round-trip.
  deck::ProxyScheme sc;check(deck::proxySchemeParse("socks5",sc)&&sc==deck::ProxyScheme::Socks5&&!std::strcmp(deck::proxySchemeName(sc),"socks5"));check(deck::proxySchemeParse("http",sc)&&sc==deck::ProxyScheme::Http);check(!deck::proxySchemeParse("https",sc));
  std::cout<<checks<<" proxy policy assertions passed\n";

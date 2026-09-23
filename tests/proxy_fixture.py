@@ -3,7 +3,8 @@
 
 A target web server (127.0.0.1, and ::1 when available), an HTTP proxy with Basic auth (CONNECT and
 absolute-form requests), a SOCKS5 proxy with an RFC 1929 login, a server that accepts and never answers,
-and a closed port. The proxies only ever connect to loopback targets: anything else is refused with 403
+a server that reads one message and hangs up, scripted servers that answer a SOCKS5 handshake with canned
+bytes (an HTTP or TLS server on a SOCKS port, odd but valid SOCKS5 replies), and a closed port. The proxies only ever connect to loopback targets: anything else is refused with 403
 (HTTP) or reply 2 (SOCKS), so nothing leaves the machine. Prints "<name> <port>" lines, then serves until
 killed. Usage: proxy_fixture.py <work-dir>   (writes <work-dir>/big.bin, the download/upload payload)
 """
@@ -90,6 +91,18 @@ def pipe(client, upstream, first=b''):
     upstream.close()
 
 
+def linger(sock):
+    """Close as web servers do: stop sending, then read what the client still sends for a moment, so an
+    unread request body does not turn the answer into a reset."""
+    try:
+        sock.shutdown(socket.SHUT_WR)
+        sock.settimeout(2)
+        while sock.recv(65536):
+            pass
+    except OSError:
+        pass
+
+
 class Server(socketserver.ThreadingTCPServer):
     daemon_threads = True
     allow_reuse_address = True
@@ -151,6 +164,7 @@ class HttpProxy(socketserver.BaseRequestHandler):
             count('http_auth_bad')
             self.request.sendall(b'HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm="fixture"\r\n'
                                  b'Content-Length: 0\r\nConnection: close\r\n\r\n')
+            linger(self.request)
             return
         count('http_auth_ok')
         method, target, version = line.split(' ')
@@ -248,6 +262,33 @@ class Silent(socketserver.BaseRequestHandler):
             pass
 
 
+def scripted(*replies):
+    """A server that answers each message it receives with the next canned reply, then hangs up."""
+    class Scripted(socketserver.BaseRequestHandler):
+        def handle(self):
+            try:
+                for reply in replies:
+                    if not self.request.recv(4096):
+                        return
+                    self.request.sendall(reply)
+            except OSError:
+                pass
+    return Scripted
+
+
+SOCKS_OK = bytes([5, 0, 0, 1, 127, 0, 0, 1, 0, 80])
+SCRIPTS = {
+    'http400': scripted(b'HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n'),
+    'tlsalert': scripted(bytes([0x15, 3, 1, 0, 2, 2, 40])),  # a TLS server's handshake_failure alert
+    'socksgss': scripted(b'\x05\x01'),                     # picks GSSAPI, which the bridge never offers
+    'socksinsist': scripted(b'\x05\x02'),                  # wants a login although none was offered
+    'socksv5auth': scripted(b'\x05\x02', b'\x05\x00', SOCKS_OK),  # login answered with version 5, as some servers do
+    'socksauthodd': scripted(b'\x05\x02', b'HT'),          # a refusal that is not a login reply
+    'socksrep4': scripted(b'\x05\x00', b'\x05\x04\x00\x09'),  # host unreachable, with an unknown address type
+    'hangup': scripted(b''),                               # reads the request, closes without a byte
+}
+
+
 def start(server):
     threading.Thread(target=server.serve_forever, daemon=True).start()
     return server.server_address[1]
@@ -265,6 +306,8 @@ def main():
         'socks': start(Server(('127.0.0.1', 0), SocksProxy)),
         'silent': start(Server(('127.0.0.1', 0), Silent)),
     }
+    for name, handler in SCRIPTS.items():
+        ports[name] = start(Server(('127.0.0.1', 0), handler))
     try:
         ports['target6'] = start(Web6(('::1', 0), Target))
     except OSError:
