@@ -1028,7 +1028,9 @@ int main(){
  // The window is glass: a behind-window blur (HUD material, like the side panel) under every page; pages add their own veils.
  Obj glass=send(send(cls("NSVisualEffectView"),"alloc"),"initWithFrame:",rect(0,0,1180,780));send<void>(glass,"setMaterial:",(Int)13);send<void>(glass,"setBlendingMode:",(Int)0);
  send<void>(glass,"setState:",(Int)1);send<void>(glass,"setAutoresizingMask:",(UInt)(2|16));send<void>(window,"setContentView:",glass);drop(glass);
- rootView=send(send((Obj)deckViewClass,"alloc"),"initWithFrame:",rect(0,0,1180,780));send<void>(rootView,"setAutoresizingMask:",(UInt)(2|16));
+ // The content view already has the restored window size (the autosaved frame may differ from 1180×780):
+ // the page view must fill it exactly, or a saved taller window leaves a gap under the title bar.
+ rootView=send(send((Obj)deckViewClass,"alloc"),"initWithFrame:",getRect(glass,"bounds"));send<void>(rootView,"setAutoresizingMask:",(UInt)(2|16));
  send<void>(rootView,"setWantsLayer:",true);send<void>(glass,"addSubview:",rootView);drop(rootView);
  if(!previewMode){
   Obj statusBar=send(cls("NSStatusBar"),"systemStatusBar");statusItem=keep(send(statusBar,"statusItemWithLength:",-1.0));Obj statusButton=send(statusItem,"button");
