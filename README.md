@@ -7,7 +7,7 @@
 **Several accounts of the same Mac app, side by side — one window per account, one shared workspace.**
 
 [![CI](https://github.com/veniameen/AppDeck/actions/workflows/ci.yml/badge.svg)](https://github.com/veniameen/AppDeck/actions/workflows/ci.yml)
-[![Version 0.12.0](https://img.shields.io/badge/version-0.12.0-222222)](CHANGELOG.md)
+[![Version 0.12.1](https://img.shields.io/badge/version-0.12.1-222222)](CHANGELOG.md)
 ![macOS 13+](https://img.shields.io/badge/macOS-13%2B-111111?logo=apple)
 ![Universal](https://img.shields.io/badge/Apple%20Silicon%20%2B%20Intel-universal-555555)
 ![C++17 · AppKit](https://img.shields.io/badge/C%2B%2B17-AppKit-00599C?logo=cplusplus)

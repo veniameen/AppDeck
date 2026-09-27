@@ -2,6 +2,11 @@
 
 All notable changes to AppDeck. Verification details for the current release are in [docs/TESTING.md](docs/TESTING.md).
 
+## 0.12.1
+
+### Fixed
+- ChatGPT 26.924 moved Codex's helper from `Contents/Resources/codex` to `Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex`. AppDeck found no helper there, so every launch with shared projects stopped with "No compatible app-server for project sync was found in the app" and account limits showed no numbers. AppDeck now uses the new location, the one the desktop app itself starts, and still finds the old one in earlier builds. The diagnostics name the helper that was found.
+
 ## 0.12.0
 
 ### Added

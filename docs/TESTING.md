@@ -28,9 +28,14 @@ No check signs in to an account, sends a model turn or opens a real profile's da
 
 Why the self-test replays events inside the app: on macOS 26 mouse events posted to another process (`CGEventPostToPid`) are dropped, and posting to the system event stream would move the user's pointer. The self-test therefore covers everything from `-[NSApplication sendEvent:]` on; a real pointer or trackpad gesture is part of the manual checklist.
 
-## Status of 0.12.0
+## Status of 0.12.1
 
-Verified on macOS 26.2, Apple Silicon, Apple clang 17:
+0.12.1 changes only where AppDeck looks for Codex's helper. ChatGPT 26.924 (Codex CLI 0.158.0-alpha.2.1) moved it from `Contents/Resources/codex` to `Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex`, the path its desktop code starts on macOS. Verified on macOS 26.2, Apple Silicon, with that ChatGPT build:
+
+- `make verify` passed with the same counts as 0.12.0, and the native project adapter and 190 group-sync assertions now run against the new helper's `app-server`; `group_sync_test` checks that the old layout is still found and the new one is preferred. Before the fix `verify.sh` also looked only at `Resources/codex` and skipped the native checks on this build, which is why the move went unnoticed.
+- The side panel and the pages are unchanged; the GUI self-test was not rerun.
+
+Verified for 0.12.0 (still valid for 0.12.1) on macOS 26.2, Apple Silicon, Apple clang 17:
 
 - `APPDECK_GUI_SELFTEST=1 make verify` passed: 677 localized string pairs; core 273, edge 485 417, workspace filter 68, usage 1 469, proxy 157, project sync 44 and automation sync 80 assertions; the proxy bridge against offline fixtures (75 checks, also on x86_64 under Rosetta and once with AddressSanitizer/UndefinedBehaviorSanitizer); the static bundle check for both slices; native project import/update/delete and 188 group-sync assertions against Codex's `app-server`; API and Accessibility smoke tests; a signed-out `get_usage` exchange with Claude Code; the side panel self-test (17 checks) on arm64 and x86_64 in English and Russian.
 - The redesign was checked against the design canvas in the running app with demo data (`tools/make_demo_data.py`), over a neutral wallpaper: every main-window page in English and the Claude group in Russian, the side panel in both languages, labels at the default window size with nothing truncated, the traffic lights inside the sidebar pane, no control focused when the window opens. The installed build on real data, including a window restored from the frame 0.10 saved (it fills the window with no gap under the title bar).
@@ -46,6 +51,7 @@ Not verified yet:
 - The account used by the Code tab of an additional Claude profile; a Claude Code meter signed in to a different account than its window.
 - Multi-monitor setups, Spaces and Stage Manager, Intel hardware (x86_64 ran under Rosetta), macOS 13–15.
 - Developer ID signing, notarization and Gatekeeper on a downloaded build.
+- The `codex-cli` helper layout of an Intel build of ChatGPT (only the arm64 build was available).
 
 ## Manual acceptance checklist
 
