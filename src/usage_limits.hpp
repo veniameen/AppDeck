@@ -35,7 +35,13 @@ Obj claudeBinary(){
  for(const char* fixed:{"/opt/homebrew/bin/claude","/usr/local/bin/claude"})if(usageExecutable(str(fixed)))return str(fixed);
  return nullptr;
 }
-Obj usageBinary(Obj a){if(usageIsClaude(a))return claudeBinary();Obj b=join(get(a,"path"),"Contents/Resources/codex");return usageExecutable(b)?b:nullptr;}
+// ChatGPT 26.924 moved the helper into codex-cli/, next to codex-package.json; the desktop app
+// itself spawns the Mach-O inside CodexCLI.app. Earlier builds ship Contents/Resources/codex.
+Obj codexBinary(Obj a){
+ for(const char* rel:{"Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex","Contents/Resources/codex"}){Obj b=join(get(a,"path"),rel);if(usageExecutable(b))return b;}
+ return nullptr;
+}
+Obj usageBinary(Obj a){return usageIsClaude(a)?claudeBinary():codexBinary(a);}
 Obj claudeMeterDir(Obj p){if(!deck::uuid(utf8(get(p,"id"))))return nullptr;Obj root=join(dataRoot,"ClaudeMeter"),dir=join(root,get(p,"id"));return mkdirPrivate(root)&&mkdirPrivate(dir)?dir:nullptr;}
 Obj usageHome(Obj p){Obj a=appFor(p);if(isMaster(p))return baseSource(a)?baseSource(a):join(home,".codex");Obj r=profileRoot(p);return r?join(r,"codex"):nullptr;}
 // Working directory only: an empty AppDeck folder, so no project-level .codex config or git

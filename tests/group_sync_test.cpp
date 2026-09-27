@@ -1,5 +1,6 @@
 // macOS-only production integration, confined to a fresh /private/tmp fixture.
-// Usage: group_sync_test /path/to/vendor/Codex.app/Contents/Resources/codex
+// Usage: group_sync_test /path/to/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex
+// (or the Contents/Resources/codex of builds before 26.924).
 // The vendor app-server receives isolated HOME/CODEX_HOME/CODEX_SQLITE_HOME values.
 // It performs local project metadata operations only; all automation fixtures are PAUSED.
 #define main appdeckApplicationMain
@@ -56,8 +57,11 @@ int main(int argc,char** argv){
  put(a,"id",str("00000000-0000-4000-8000-000000000001"));put(a,"name",str("Isolated fixture"));put(a,"adapter",str("codex"));
  put(a,"baseSource",base);put(a,"sharedHistory",boolean(true));put(a,"path",fakeBundle);put(a,"bundleId",str("local.appdeck.group-sync-fixture"));add(apps,a);selected=get(a,"id");
  integrationCheck(mkdirPrivate(base)&&mkdirPrivate(join(fakeBundle,"Contents/Resources")),"create isolated base and fake bundle");
- Obj error=nullptr;integrationCheck(send<bool>(fileManager,"createSymbolicLinkAtPath:withDestinationPath:error:",join(fakeBundle,"Contents/Resources/codex"),str(argv[1]),&error),"link only the vendor helper executable into fake bundle");
- integrationCheck(usageBinary(a)!=nullptr&&!groupBaseRunning(a),"fixture helper available and base is stopped");
+ Obj error=nullptr,legacy=join(fakeBundle,"Contents/Resources/codex"),cli=join(fakeBundle,"Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS");
+ integrationCheck(send<bool>(fileManager,"createSymbolicLinkAtPath:withDestinationPath:error:",legacy,str(argv[1]),&error),"link only the vendor helper executable into fake bundle");
+ integrationCheck(same(usageBinary(a),legacy),"helper of builds before 26.924 is found");
+ integrationCheck(send<bool>(fileManager,"createDirectoryAtPath:withIntermediateDirectories:attributes:error:",cli,true,nullptr,&error)&&send<bool>(fileManager,"createSymbolicLinkAtPath:withDestinationPath:error:",join(cli,"codex"),str(argv[1]),&error),"link the vendor helper into the codex-cli layout");
+ integrationCheck(same(usageBinary(a),join(cli,"codex"))&&!groupBaseRunning(a),"codex-cli helper preferred and base is stopped");
  Obj first=dict(),second=dict();put(first,"id",str("00000000-0000-4000-8000-000000000011"));put(second,"id",str("00000000-0000-4000-8000-000000000012"));
  for(Obj p:{first,second}){put(p,"appId",get(a,"id"));put(p,"name",get(p,"id"));put(p,"share",boolean(true));add(profiles,p);integrationCheck(mkdirPrivate(join(profileRoot(p),"codex")),"create isolated copy CODEX_HOME");}
  Obj firstHome=join(profileRoot(first),"codex"),secondHome=join(profileRoot(second),"codex");

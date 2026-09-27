@@ -105,7 +105,7 @@ Run the owner profile and enable the schedule there: AppDeck is not a scheduler 
 
 Turn it on once per Codex group: with **Account limits…** at the bottom of the Profiles page or in **Shared settings**; the same place turns it off and forgets the cached numbers.
 
-**Where the numbers come from.** AppDeck makes no network requests and never opens `auth.json`. It starts the chosen app's own helper, `Contents/Resources/codex app-server`, with the profile's data folder and asks two questions of the official protocol: `account/read` (which account is signed in) and `account/rateLimits/read` (the limit windows), with token refresh switched off. Codex itself talks to OpenAI, the same way its window does. The helper lives for a second or two, like any second Codex client next to the window.
+**Where the numbers come from.** AppDeck makes no network requests and never opens `auth.json`. It starts the chosen app's own helper, `codex app-server` (inside `Contents/Resources/codex-cli` since ChatGPT 26.924, `Contents/Resources/codex` before), with the profile's data folder and asks two questions of the official protocol: `account/read` (which account is signed in) and `account/rateLimits/read` (the limit windows), with token refresh switched off. Codex itself talks to OpenAI, the same way its window does. The helper lives for a second or two, like any second Codex client next to the window.
 
 **What is stored:** percentages, reset times, the plan, an exhaustion flag and the account address for the card label. No tokens. Diagnostics never include addresses.
 

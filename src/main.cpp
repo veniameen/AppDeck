@@ -593,7 +593,9 @@ void diagnosticsAction(Obj,Sel,Obj){
  add(lines,str("Launch: NSWorkspace new instance. No tokens/config contents included below."));
  for(UInt i=0;i<count(apps);++i){Obj a=at(apps,i);Obj line=cat(cat(cat(get(a,"name"),str(" | ")),get(a,"adapter")),exists(get(a,"path"))?str(" | installed"):str(" | MISSING"));
   line=cat(line,str(baseSource(a)?" | base connected":" | no base"));line=cat(line,str(!get(a,"sharedHistory")?" | history: not chosen":truth(get(a,"sharedHistory"))?" | history: shared (CODEX_SQLITE_HOME)":" | history: separate"));
-  line=cat(line,str(!get(a,"usageLimits")?" | limits: not chosen":usageEnabled(a)?" | limits: on (codex app-server)":" | limits: off"));add(lines,line);}
+  line=cat(line,str(!get(a,"usageLimits")?" | limits: not chosen":!usageEnabled(a)?" | limits: off":usageIsClaude(a)?" | limits: on (claude)":" | limits: on (codex app-server)"));
+  if(usageCapable(a)){Obj b=usageBinary(a);line=cat(line,str(!b?" | helper: MISSING":usageIsClaude(a)?" | helper: found":send<bool>(b,"hasSuffix:",str("CodexCLI.app/Contents/MacOS/codex"))?" | helper: codex-cli":" | helper: Resources/codex"));}
+  add(lines,line);}
  for(UInt i=0;i<count(profiles);++i){Obj u=usageOf(at(profiles,i));if(!u)continue;Obj e=get(u,"error");
   add(lines,cat(formatInt("Profile %ld limits: ",(Int)i+1),e?cat(str("no numbers — "),e):formatInt("ok, %ld window(s)",(Int)count(get(u,"windows")))));}
  for(UInt i=0;i<count(events);++i)add(lines,at(events,i));
@@ -959,7 +961,7 @@ void toggleUsageAction(Obj,Sel,Obj){
  if(usageEnabled(a)){put(a,"usageLimits",boolean(false));
   // Switching off also forgets the cached numbers and account labels.
   for(UInt i=0;i<count(profiles);++i)if(appFor(at(profiles,i))==a)erase(at(profiles,i),"usage");save();note("Account limits disabled; cached numbers removed.");}
- else{if(!usageBinary(a)){showError(str(T("Limits unavailable","Лимиты недоступны")),str(usageIsClaude(a)?T("Claude Code (the claude program) was not found. Install it — for example open the Code tab in Claude Desktop or install it from Anthropic's website — and try again.","Не найден Claude Code (программа claude). Установите его — например, откройте вкладку Code в Claude Desktop или выполните установку с сайта Anthropic — и повторите."):T("The chosen app has no Contents/Resources/codex helper that could be asked for limits.","В выбранном приложении нет служебной программы Contents/Resources/codex, у которой можно спросить лимиты.")));return;}
+ else{if(!usageBinary(a)){showError(str(T("Limits unavailable","Лимиты недоступны")),str(usageIsClaude(a)?T("Claude Code (the claude program) was not found. Install it — for example open the Code tab in Claude Desktop or install it from Anthropic's website — and try again.","Не найден Claude Code (программа claude). Установите его — например, откройте вкладку Code в Claude Desktop или выполните установку с сайта Anthropic — и повторите."):T("The chosen app has no Codex helper (codex-cli or Resources/codex) that could be asked for limits.","В выбранном приложении нет служебной программы Codex (codex-cli или Resources/codex), у которой можно спросить лимиты.")));return;}
   if(askUsage(a))for(UInt i=0;i<count(profiles);++i)if(appFor(at(profiles,i))==a)usageForce(at(profiles,i));}
  buildUI();usagePump();refresh();
 }

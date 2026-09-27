@@ -28,7 +28,9 @@ done
 SUFFIX="$(uuidgen)"
 "$OUT/project_server_sync_test" "$PWD/tests/project_server_fixture.py" "/private/tmp/appdeck-project-adapter-protocol-$SUFFIX" --protocol-fixture
 rm -rf "/private/tmp/appdeck-project-adapter-protocol-$SUFFIX"
-CODEX_BINARY="${APPDECK_CODEX_BINARY:-/Applications/ChatGPT.app/Contents/Resources/codex}"
+# ChatGPT 26.924 moved the helper into codex-cli/; earlier builds ship Resources/codex.
+CODEX_BINARY="${APPDECK_CODEX_BINARY:-/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex}"
+[[ -n "${APPDECK_CODEX_BINARY:-}" || -x "$CODEX_BINARY" ]] || CODEX_BINARY=/Applications/ChatGPT.app/Contents/Resources/codex
 if [[ -x "$CODEX_BINARY" ]]; then
   "$OUT/project_server_sync_test" "$CODEX_BINARY" "/private/tmp/appdeck-project-adapter-native-$SUFFIX"
   rm -rf "/private/tmp/appdeck-project-adapter-native-$SUFFIX"
