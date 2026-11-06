@@ -160,7 +160,11 @@ Chromium and Electron accept `--proxy-server` but cannot answer a proxy's authen
 
 ## Localization
 
-The interface is English or Russian. Every visible string is written in place as `T("English", "Русский")`, next to its use, so the two languages cannot drift apart. The language is decided once at launch from `NSBundle.preferredLocalizations`: the bundle declares `CFBundleLocalizations` en/ru and ships `en.lproj` / `ru.lproj` (Info.plist strings), so AppDeck and AppKit's own panels choose the same language — Russian when the user prefers Russian over English (or picks it for AppDeck in System Settings), English otherwise. Dates in limit captions use the matching locale. `tools/check_i18n.py` (part of `make test`) fails on Cyrillic outside a `T()` pair and on differing printf conversions between the halves. The documentation and the bundled user guide (`Help.html`, rendered from `docs/USER_GUIDE.md`) are English.
+The interface is English or Russian. Every visible string is written in place as `T("English", "Русский")`, next to its use, so the two languages cannot drift apart. At launch, AppDeck captures the system choice from `NSBundle.preferredLocalizations`: the bundle declares `CFBundleLocalizations` en/ru and ships `en.lproj` / `ru.lproj` (Info.plist strings). Russian is selected when the user prefers it over English or picks it for AppDeck in System Settings; otherwise the system choice is English.
+
+AppDeck's own `state.plist` stores `interfaceLanguage` as `system`, `en` or `ru`. A missing or unsupported value follows the captured system choice. The AppDeck menu, menu-bar status menu and About-page selector can change the preference without restarting a managed app. After a successful save, AppDeck refreshes the main interface, menus, status-button tooltip and side-panel content; limit date captions use the matching locale on their next refresh. A failed save restores the previous selection. Profile names and stored messages are not translated in place. This app-owned preference does not change global macOS language preferences or the native file-dialog controls chosen by AppKit.
+
+`tools/check_i18n.py` (part of `make test`) fails on Cyrillic outside a `T()` pair and on differing printf conversions between the halves. The documentation and the bundled user guide (`Help.html`, rendered from `docs/USER_GUIDE.md`) are English.
 
 ## Lifecycle actions
 

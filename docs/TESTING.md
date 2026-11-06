@@ -31,7 +31,21 @@ No check signs in to an account, sends a model turn or opens a real profile's da
 
 Why the self-test replays events inside the app: on macOS 26 mouse events posted to another process (`CGEventPostToPid`) are dropped, and posting to the system event stream would move the user's pointer. The self-test therefore covers everything from `-[NSApplication sendEvent:]` on; a real pointer or trackpad gesture is part of the manual checklist.
 
-## Status of 0.14.0
+## Status of 0.15.0
+
+AppDeck now saves its own interface-language preference and switches the custom UI immediately between system default, English and Russian. The choice is available from the AppDeck menu, menu-bar status menu and About page. It does not restart managed applications or rewrite profile names, and native macOS file-dialog controls keep their platform language.
+
+Verified on macOS 26.2 / Apple Silicon:
+
+- A disposable native GUI harness passed 112 assertions on arm64 and 112 on x86_64/Rosetta. It dispatched the actual About popup and menu actions, checked translated main/status menus, the status-button tooltip and visible side panel, saved/reloaded the preference, restored either system-language choice, rejected invalid choices and rolled back a failed settings write. Profile contents, order and selection were preserved. No managed application or real profile was used. Evidence: `build/language-qa/{arm64,x86_64}/report.json`.
+- The built application was started in separate scratch render processes with saved Russian against `-AppleLanguages '(en)'`, and saved English against `-AppleLanguages '(ru)'`. Both rendered the saved language and left their input state unchanged. Evidence: `build/language-render-0.15.0/startup-render-report.json`.
+- Actual English/Russian About-window and side-panel screenshots were reviewed for both architectures at the minimum 1120 x 720 window size; the new selector fits without overlap. The app-owned interface switches live. Native macOS file-dialog controls and previously stored text retain their own language.
+
+`APPDECK_GUI_SELFTEST=1 make verify` passed (exit 0; `build/final-verification-0.15.0.log`): 840 localized string pairs, all eight portable ASan/UBSan suites, 99 Claude session, 360 clean-profile, 131 network and 142 ordinary-app assertions per architecture, 76 offline proxy checks, native project fixtures and 190 group-sync assertions, signed-out safe-mode Claude Code `get_usage`, API/AX smoke tests, and 17 side-panel checks for each architecture/language combination. The universal warnings-as-errors build and static bundle checks passed. The release-candidate ZIP was extracted and verified with system `codesign --verify --deep --strict`, both architecture checks and a byte comparison with the built bundle (`build/package-validation-0.15.0.json`). Developer ID signing, notarization, Intel hardware and macOS 13–15 remain untested.
+
+The saved proxy was updated after the 0.14.0 release checks below. A separate recheck established successful proxy authentication and verified HTTPS CONNECT/TLS to `claude.ai` and `api.anthropic.com`; two external-address samples matched. A new disposable Claude Desktop instance through that proxy rendered the first-run welcome and Cookie settings dialog. It quit normally, all owned helper/scratch data was removed, and the original Claude stayed running. No sign-in or model request was performed. Evidence: `build/proxy-recheck-updated.json` and `build/claude-proxy-recheck-2026-11-06.json`. This does not establish complete network confinement or indefinite IP stability.
+
+## Previous status of 0.14.0
 
 This release adds private Code storage for newly created clean Claude profiles while preserving the real macOS home. The new `claudeCodeIsolated` setting is separate from the existing `claudeClean` flag: older clean profiles remain Desktop-only, and standard/primary profiles keep their usual Code environment.
 

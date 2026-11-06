@@ -243,7 +243,13 @@ For groups **without** shared history only (with it, the group reconciliation ab
 
 ## Language
 
-AppDeck is in English, or in Russian when Russian comes before English in your preferred languages (System Settings → General → Language & Region). You can also choose a language for AppDeck alone under **Applications** in the same settings. The user guide inside the app follows the same choice.
+Choose **AppDeck → Language → Russian** to use Russian even when macOS is in English. The same choices are available in AppDeck's menu-bar status menu and under **About → Interface language**:
+
+- **System default** follows the language macOS selects for AppDeck: Russian when Russian is preferred over English, or when it is selected for AppDeck in System Settings → General → Language & Region → Applications; otherwise English.
+- **English** always uses English for AppDeck's interface.
+- **Russian** always uses Russian for AppDeck's interface.
+
+The main window, menus, side panel and date captions update immediately. AppDeck saves the choice for the next launch; no managed profile needs to restart. Profile names and previously stored messages keep their original text. Native macOS file-dialog controls follow the macOS application-language setting. Documentation and the bundled user and network guides are English.
 
 ## Data, updates and diagnostics
 
@@ -251,7 +257,7 @@ Everything AppDeck keeps is in `~/Library/Application Support/AppDeck`:
 
 | Path | Contents |
 |---|---|
-| `state.plist` | Apps, profiles (in your order), projects and cached display data. |
+| `state.plist` | Apps, profiles (in your order), projects, interface-language preference and cached display data. |
 | `Profiles/<id>/` | One private folder (mode 0700) per profile: `user-data`, and `codex` for Codex profiles. |
 | `Shared/<app id>/` | Fallback shared settings and the group sync journal of a Codex group. |
 | `ClaudeMeter/<id>/` | Claude Code folders used only to read Claude limits. |

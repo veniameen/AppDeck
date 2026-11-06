@@ -12,7 +12,7 @@
 #include "claude_session_policy.hpp"
 using namespace mac;
 namespace {
-constexpr const char* VERSION="0.14.0";
+constexpr const char* VERSION="0.15.0";
 void* appKit=nullptr;
 Obj app=nullptr,window=nullptr,controller=nullptr,rootView=nullptr;
 Obj state=nullptr,apps=nullptr,profiles=nullptr,projects=nullptr,selected=nullptr;
@@ -22,11 +22,10 @@ Obj timer=nullptr,events=nullptr;
 Class deckViewClass=nullptr,controllerClass=nullptr,deckButtonClass=nullptr,edgeButtonClass=nullptr;
 Int page=0;
 bool building=false,quitting=false,previewMode=false;
-// Interface language, decided once at launch: Russian when macOS picks the bundle's ru localization
-// (Russian ahead of English among the preferred languages, or chosen for AppDeck in System Settings),
-// English otherwise. AppKit's own panels follow the same choice. Every visible string is T(en, ru).
-bool ruUI=false;
-inline const char* T(const char* en,const char* ru){return ruUI?ru:en;}
+// Keep the launch-time system choice separate from AppDeck's saved interface override.
+// Native AppKit file-panel controls keep their own macOS localization.
+bool ruUI=false,systemRuUI=false;
+inline const char* T(const char* en,const char* ru){return __atomic_load_n(&ruUI,__ATOMIC_RELAXED)?ru:en;}
 int lockFd=-1;
 const unsigned colors[6]={0x89C5F7,0x8BD0A3,0xDEB775,0xF3A98F,0xEFA4C1,0x6CD1D1};
 void buildUI();void buildMenus();bool save();void refresh();
@@ -137,6 +136,22 @@ Obj mutablePlist(Obj path){
  return send(cls("NSPropertyListSerialization"),"propertyListWithData:options:format:error:",d,(UInt)1,&format,&err);
 }
 bool isClass(Obj o,const char* name){return o&&send<bool>(o,"isKindOfClass:",cls(name));}
+Int interfaceLanguageSelection(){
+ Obj value=get(state,"interfaceLanguage");if(!isClass(value,"NSString"))return 0;
+ return same(value,str("en"))?1:same(value,str("ru"))?2:0;
+}
+void applyInterfaceLanguage(){Int choice=interfaceLanguageSelection();__atomic_store_n(&ruUI,choice==2||(choice==0&&systemRuUI),__ATOMIC_RELAXED);}
+bool setInterfaceLanguage(Int choice){
+ if(previewMode||!state||choice<0||choice>2)return false;
+ Obj previous=keep(get(state,"interfaceLanguage"));put(state,"interfaceLanguage",str(choice==1?"en":choice==2?"ru":"system"));
+ if(!save()){if(previous)put(state,"interfaceLanguage",previous);else erase(state,"interfaceLanguage");drop(previous);buildUI();return false;}
+ drop(previous);applyInterfaceLanguage();
+ if(statusItem)send<void>(send(statusItem,"button"),"setToolTip:",str(T("AppDeck — switch profiles","AppDeck — переключение профилей")));
+ buildMenus();buildUI();return true;
+}
+void languagePickAction(Obj,Sel,Obj sender){
+ Int choice=isClass(sender,"NSPopUpButton")?send<Int>(sender,"indexOfSelectedItem"):send<Int>(sender,"tag");setInterfaceLanguage(choice);
+}
 void load(){
  Obj p=join(dataRoot,"state.plist");Obj loaded=exists(p)&&!symlink(p)?mutablePlist(p):nullptr;
  if(loaded&&(!isClass(loaded,"NSDictionary")||(integer(get(loaded,"schema"))!=1&&integer(get(loaded,"schema"))!=2)))loaded=nullptr;
@@ -146,7 +161,7 @@ void load(){
   if(symlink(backup)){showError(str(T("Unsafe backup path","Небезопасный путь резервной копии")),str(T("state-v1.before-0.2.plist must not be a link.","Файл state-v1.before-0.2.plist не должен быть ссылкой.")));exit(2);}
   if(!exists(backup)&&!previewMode){Obj bytes=send(cls("NSData"),"dataWithContentsOfFile:",p);if(!bytes||!send<bool>(bytes,"writeToFile:atomically:",backup,true)){showError(str(T("Could not back up the original settings","Не удалось сохранить исходные настройки")),str(T("Migration stopped. state.plist is unchanged.","Миграция остановлена. state.plist не изменён.")));exit(2);}chmod(utf8(backup),0600);}
  }
- state=keep(loaded?loaded:dict());
+ state=keep(loaded?loaded:dict());applyInterfaceLanguage();
  for(const char* key:{"apps","profiles","projects"}){Obj x=get(state,key);if(!x)put(state,key,array());else if(!isClass(x,"NSArray")){showError(str(T("Invalid settings","Некорректные настройки")),str(T("Expected a list of apps, profiles and projects.","Ожидался список приложений, профилей и проектов.")));exit(2);}}
  apps=get(state,"apps");profiles=get(state,"profiles");projects=get(state,"projects");
  for(UInt i=0;i<count(apps);++i){Obj a=at(apps,i);if(!isClass(a,"NSDictionary")||!isClass(get(a,"id"),"NSString")||!deck::uuid(utf8(get(a,"id")))||!isClass(get(a,"path"),"NSString")||!isClass(get(a,"name"),"NSString")||!isClass(get(a,"adapter"),"NSString")){showError(str(T("Invalid app","Некорректное приложение")),str(T("Check state.plist. Nothing was changed.","Проверьте файл state.plist. Ничего не изменено.")));exit(2);}}
@@ -1027,6 +1042,10 @@ void buildUI(){
   {Obj vs=cat(str(VERSION),str(" · arm64 + x86_64 · macOS 13+"));Obj font=codeFont(11,.23);double vw=measure(utf8(vs),font)+22;
    Obj version=panel(box,rect(124,56,vw,22),fill(.07),11);Obj vl=send(version,"layer");send<void>(vl,"setBorderWidth:",1.0);send<void>(vl,"setBorderColor:",send(fill(.10),"CGColor"));
    Obj t=labelObj(version,vs,rect(0,3,vw,15),11,muted(),0);send<void>(t,"setFont:",font);send<void>(t,"setAlignment:",alignCenter);}
+  label(box,T("Interface language","Язык интерфейса"),rect(w-260,24,236,18),12,muted());
+  {const char* choices[]={T("System default","Как в системе"),T("English","English"),T("Russian","Русский")};
+   Obj language=popup(box,rect(w-264,47,244,28),choices,3,interfaceLanguageSelection());send<void>(language,"setTarget:",controller);send<void>(language,"setAction:",sel("languagePick:"));
+   send<void>(language,"setAccessibilityLabel:",str(T("Interface language","Язык интерфейса")));send<void>(language,"setToolTip:",str(T("Applies immediately to AppDeck and is remembered after restart.","Сразу применяется к AppDeck и сохраняется после перезапуска.")));}
   lines(box,T("Local ad-hoc build: no Developer ID and no Apple notarization.\nProfile compatibility depends on the version of the launched app.\nAfter a rebuild macOS may ask for Accessibility access again.","Локальная ad-hoc сборка: без Developer ID и нотариального заверения Apple.\nСовместимость профилей зависит от версии запускаемого приложения.\nПосле пересборки macOS может заново запросить Универсальный доступ."),rect(124,88,w-148,48),12,faint(),16);
   caption(rootView,T("KEYBOARD","КЛАВИАТУРА"),rect(x,314,w,14));
   Obj keys=card(rootView,rect(x,336,w,144),16);
@@ -1070,10 +1089,15 @@ void refresh(){
  if(menuChanged)buildMenus();edgeRefresh();
  if(flagged)buildUI(); // shows the "Подробнее" button on the affected card
 }
+void addLanguageMenu(Obj menu){
+ Obj top=menuItem(menu,T("Language","Язык"),nullptr),sub=make("NSMenu");send<void>(sub,"setAutoenablesItems:",false);send<void>(top,"setSubmenu:",sub);
+ const char* choices[]={T("System default","Как в системе"),T("English","English"),T("Russian","Русский")};
+ for(Int i=0;i<3;++i){Obj item=menuItem(sub,choices[i],"languagePick:",i);send<void>(item,"setState:",(Int)(i==interfaceLanguageSelection()?1:0));}drop(sub);
+}
 void buildMenus(){
  invalidateEdge();Obj bar=make("NSMenu");
  Obj top=menuItem(bar,"AppDeck",nullptr);Obj m=make("NSMenu");send<void>(top,"setSubmenu:",m);
- menuItem(m,T("Show AppDeck","Показать AppDeck"),"showWindow:");menuItem(m,T("Side panel  ⌃⌥Space","Правая панель  ⌃⌥Space"),"toggleEdge:");menuItem(m,T("About","О приложении"),"changePage:",4);menuItem(m,T("User guide","Инструкция (EN)"),"showHelp:");separator(m);
+ menuItem(m,T("Show AppDeck","Показать AppDeck"),"showWindow:");menuItem(m,T("Side panel  ⌃⌥Space","Правая панель  ⌃⌥Space"),"toggleEdge:");addLanguageMenu(m);menuItem(m,T("About","О приложении"),"changePage:",4);menuItem(m,T("User guide","Инструкция (EN)"),"showHelp:");separator(m);
  Obj quit=menuItem(m,T("Quit AppDeck","Завершить AppDeck"),"terminate:",-1,"q");send<void>(quit,"setTarget:",app);drop(m);
  top=menuItem(bar,T("File","Файл"),nullptr);m=make("NSMenu");send<void>(top,"setSubmenu:",m);
  if(!isStandalone(currentApp()))menuItem(m,T("New Profile…","Новый профиль…"),"newProfile:",-1,"n");menuItem(m,T("Add App…","Добавить приложение…"),"chooseApp:");menuItem(m,T("Add Project…","Добавить проект…"),"addProject:");separator(m);menuItem(m,T("Diagnostics…","Диагностика…"),"diagnostics:");
@@ -1088,7 +1112,7 @@ void buildMenus(){
  send<void>(app,"setMainMenu:",bar);drop(bar);
  if(statusItem){Obj status=make("NSMenu");send<void>(status,"setAutoenablesItems:",false);menuItem(status,T("Side panel  ⌃⌥Space","Правая панель  ⌃⌥Space"),"toggleEdge:");menuItem(status,T("Show AppDeck","Показать AppDeck"),"showWindow:");menuItem(status,T("Arrange 2×2","Разложить 2×2"),"tileWindows:");menuItem(status,T("Restore Layout","Вернуть расположение"),"restoreWindows:");menuItem(status,T("Hide Profiles","Скрыть профили"),"hideProfiles:");separator(status);
   for(UInt i=0;i<count(profiles);++i){Obj p=at(profiles,i);Obj title=cat(running(p)?str("● "):str("○ "),isStandalone(appFor(p))?get(p,"name"):cat(cat(get(appFor(p),"name"),str(" · ")),get(p,"name")));menuItem(status,utf8(title),"launchProfile:",profileIndex(p));}
-  separator(status);menuItem(status,T("User guide","Инструкция (EN)"),"showHelp:");Obj q=menuItem(status,T("Quit AppDeck","Завершить AppDeck"),"terminate:");send<void>(q,"setTarget:",app);send<void>(statusItem,"setMenu:",status);drop(status);
+  separator(status);addLanguageMenu(status);menuItem(status,T("User guide","Инструкция (EN)"),"showHelp:");Obj q=menuItem(status,T("Quit AppDeck","Завершить AppDeck"),"terminate:");send<void>(q,"setTarget:",app);send<void>(statusItem,"setMenu:",status);drop(status);
  }
 }
 bool flipped(Obj,Sel){return true;}
@@ -1181,6 +1205,7 @@ void registerClasses(){
  {"toggleShare:",shareAction},{"profileError:",profileErrorAction},{"changePage:",pageAction},{"showWindow:",showWindowAction},{"launchAll:",launchAllAction},{"changePath:",changePathAction},{"removeApp:",removeAppAction},
  {"openSharedFolder:",openSharedFolder},{"openSharedFile:",openSharedFile},{"importSettings:",importSettings},{"openData:",openDataAction},{"addProject:",addProjectAction},
  {"projectAction:",projectAction},{"showHelp:",helpAction},{"diagnostics:",diagnosticsAction},{"tileWindows:",tileAction},{"timerTick:",tick},
+ {"languagePick:",languagePickAction},
  {"claudeProfileSettings:",claudeProfileSettingsAction},{"claudeWeb:",claudeWebAction},{"claudeProxyChanged:",claudeProxyChangedAction},{"claudeAddProxy:",claudeAddProxyAction},{"claudeNetworkHelp:",claudeNetworkHelpAction},{"claudeBridgeToggle:",claudeBridgeToggleAction},{"claudeSessionsRefresh:",claudeSessionsRefreshAction},{"claudeSessionMenu:",claudeSessionMenuAction},{"claudeSessionOpen:",claudeSessionOpenAction},
  {"toggleEdge:",toggleEdgeAction},{"edgeFocus:",edgeFocusAction},
  {"proxyAdd:",proxyAddAction},{"proxyEdit:",proxyEditAction},{"proxyRemove:",proxyRemoveAction},{"proxyCheck:",proxyCheckAction},{"proxyCheckWorker:",proxyCheckWorker},{"proxyCheckFinished:",proxyCheckFinished},
@@ -1201,7 +1226,7 @@ int main(){
  appKit=dlopen("/System/Library/Frameworks/AppKit.framework/AppKit",2|8);if(!appKit)return 10;
  dlopen("/System/Library/Frameworks/QuartzCore.framework/QuartzCore",2|8);
  Pool pool;app=send(cls("NSApplication"),"sharedApplication");send<bool>(app,"setActivationPolicy:",(Int)0);
- {Obj languages=send(send(cls("NSBundle"),"mainBundle"),"preferredLocalizations");ruUI=count(languages)&&send<bool>(at(languages,0),"hasPrefix:",str("ru"));}
+ {Obj languages=send(send(cls("NSBundle"),"mainBundle"),"preferredLocalizations");systemRuUI=count(languages)&&send<bool>(at(languages,0),"hasPrefix:",str("ru"));applyInterfaceLanguage();}
  fileManager=send(cls("NSFileManager"),"defaultManager");workspace=send(cls("NSWorkspace"),"sharedWorkspace");
  home=keep(send(send(fileManager,"homeDirectoryForCurrentUser"),"path"));dataRoot=keep(join(home,"Library/Application Support/AppDeck"));
  // APPDECK_DATA_ROOT runs a fully separate manager (own state, profiles and lock) for acceptance tests.

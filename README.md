@@ -7,7 +7,7 @@
 **Several accounts of the same Mac app, side by side — one window per account, one shared workspace.**
 
 [![CI](https://github.com/veniameen/AppDeck/actions/workflows/ci.yml/badge.svg)](https://github.com/veniameen/AppDeck/actions/workflows/ci.yml)
-[![Version 0.14.0](https://img.shields.io/badge/version-0.14.0-222222)](CHANGELOG.md)
+[![Version 0.15.0](https://img.shields.io/badge/version-0.15.0-222222)](CHANGELOG.md)
 ![macOS 13+](https://img.shields.io/badge/macOS-13%2B-111111?logo=apple)
 ![Universal](https://img.shields.io/badge/Apple%20Silicon%20%2B%20Intel-universal-555555)
 ![C++17 · AppKit](https://img.shields.io/badge/C%2B%2B17-AppKit-00599C?logo=cplusplus)
@@ -19,7 +19,7 @@
 
 AppDeck is a small native macOS app for people who work in the same desktop app under several accounts — typically [Codex](https://openai.com/codex/) (`ChatGPT.app`) or [Claude Desktop](https://claude.ai/download) with a personal and a work subscription. Every profile is an ordinary window of the original app with its own sign-in. AppDeck launches them, keeps their data apart, shows how much of each account's usage limit is left and lets you switch between them from anywhere.
 
-**New in 0.14:** newly created clean Claude profiles keep Code configuration and local transcripts in their own empty folder while using the normal macOS home. Creation also offers saved-proxy selection, DNS/optional-traffic settings and a separate Chrome profile for Claude Web. Existing profiles retain their data and earlier mode. See the [network guide](docs/CLAUDE_NETWORK.md), [changelog](CHANGELOG.md) and [verification status](docs/TESTING.md).
+**New in 0.15:** choose English or Russian inside AppDeck, independently of the macOS language. Use **AppDeck → Language** or **About → Interface language**; the interface updates immediately and remembers your choice. See the [language guide](docs/USER_GUIDE.md#language), [changelog](CHANGELOG.md) and [verification status](docs/TESTING.md).
 
 ## Features
 
@@ -34,7 +34,7 @@ AppDeck is a small native macOS app for people who work in the same desktop app 
 - **Window tools.** Arrange four windows in a 2×2 grid and put them back, hide every profile at once, reopen a window that was closed with the red button.
 - **Graphite glass.** A dark translucent interface in the manner of macOS 26: a floating sidebar, one bone-white ink, capsule controls of one height, colour only for state and for each profile's badge.
 - **Native and light.** A C++17 app on public AppKit and Objective-C runtime APIs, plus a tiny libSystem-only proxy bridge. No Electron, no WebView, no network client of its own, no telemetry. A universal binary for macOS 13 and later.
-- **English and Russian.** The interface follows your macOS language.
+- **English and Russian.** Follow the system language or choose one in AppDeck. Menus, the main window, side panel and date captions update immediately; the choice survives a restart.
 
 ## The side panel
 

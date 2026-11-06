@@ -2,6 +2,16 @@
 
 All notable changes to AppDeck. Verification details for the current release are in [docs/TESTING.md](docs/TESTING.md).
 
+## 0.15.0
+
+### Added
+
+- An interface-language selector in the AppDeck menu, menu-bar status menu and About page: system default, English or Russian. An explicit choice overrides the macOS language, applies immediately to AppDeck's interface, menus, side panel and date captions, and is saved for the next launch. Managed profile windows do not need to restart.
+
+### Changed
+
+- The language preference is stored in AppDeck's own `state.plist`. Missing or unsupported values use the system choice; profile names and stored messages are not rewritten. Native macOS file-dialog controls continue following the macOS application-language setting; documentation and bundled guides remain English.
+
 ## 0.14.0
 
 ### Added
