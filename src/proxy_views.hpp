@@ -111,6 +111,14 @@ void proxyProfileMenu(Obj m,Obj p,Int tag){
  if(running(p)){separator(sub);Obj hint=menuItem(sub,T("Applies at the next launch","Применится при следующем запуске"),nullptr);send<void>(hint,"setEnabled:",false);}
  separator(sub);menuItem(sub,T("Proxy settings…","Настройки прокси…"),"changePage:",3);drop(sub);
 }
+void appProxyMenuAction(Obj,Sel,Obj sender){
+ Obj p=fromSender(sender);if(!p)return;Obj menu=make("NSMenu");proxyProfileMenu(menu,p,profileIndex(p));
+ Obj sub=send(send(menu,"itemAtIndex:",(Int)0),"submenu");send<bool>(sub,"popUpMenuPositioningItem:atLocation:inView:",(Obj)nullptr,Point{0,36},sender);drop(menu);
+}
+void copyAppProxyAction(Obj,Sel,Obj sender){
+ Obj address=proxyLocalAddress(fromSender(sender));if(!address)return;
+ Obj pasteboard=send(cls("NSPasteboard"),"generalPasteboard");send<Int>(pasteboard,"clearContents");send<bool>(pasteboard,"setString:forType:",address,str("public.utf8-plain-text"));
+}
 // The Proxy page.
 void buildProxyPage(double x,double w,double footY){
  double titleW=headerButtons(x+w,{{T("Add proxy","Добавить прокси"),"proxyAdd:","plus",true,nullptr}})-x-16;

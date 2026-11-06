@@ -104,6 +104,10 @@ bool proxyWatch(Obj b,int pid){
 }
 void proxyAbandon(Obj b){if(b)send<void>(get(b,"writer"),"closeFile");} // no watch line: the bridge leaves at once
 Obj proxyURL(int port){return formatInt("http://127.0.0.1:%ld",port);}
+Obj proxyLocalAddress(Obj p){
+ if(!running(p)||!isClass(get(p,"proxyPort"),"NSNumber"))return nullptr;
+ Int port=integer(get(p,"proxyPort"));return port>0&&port<=65535?proxyURL((int)port):nullptr;
+}
 // What an app is started with: Chromium's switches, and the environment for Node and CLI helpers.
 void proxyApplyEnv(Obj env,int port){
  Obj url=proxyURL(port);for(const char* k:{"HTTP_PROXY","HTTPS_PROXY","ALL_PROXY","http_proxy","https_proxy","all_proxy"})put(env,k,url);

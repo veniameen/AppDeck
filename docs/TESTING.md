@@ -28,6 +28,21 @@ No check signs in to an account, sends a model turn or opens a real profile's da
 
 Why the self-test replays events inside the app: on macOS 26 mouse events posted to another process (`CGEventPostToPid`) are dropped, and posting to the system event stream would move the user's pointer. The self-test therefore covers everything from `-[NSApplication sendEvent:]` on; a real pointer or trackpad gesture is part of the manual checklist.
 
+## Unreleased: ordinary application launch
+
+Unknown native `.app` bundles now register as ordinary applications with one launch entry and no profile data folders. Known adapters can also select ordinary launch. Proxy delivery is environment-only for ordinary apps, with a copyable loopback address for manual setup.
+
+Verified on this Mac:
+
+- `make test`: 706 localized English/Russian pairs; core 301, edge 485 417, workspace filter 68, usage 1 469, proxy 157, project sync 44 and automation sync 80 assertions with ASan/UBSan.
+- `make verify` passed after the AnyDesk launch fix: universal build and system ad-hoc signing checks, static bundle verification, 76 offline proxy-bridge checks, both native generic-app runners, the offline project protocol fixture, API/AX smoke tests and signed-out Claude Code `get_usage`. Native Codex project/group fixtures were skipped because no vendor helper was available at the verifier's default paths. The preceding UI revision also passed `APPDECK_GUI_SELFTEST=1 make verify`, including 17 side-panel checks for each architecture/language combination; the launch fix does not change the panel UI.
+- Native generic-app fixtures: the expanded final regression suite passed 131 assertions each on arm64 and x86_64 under Rosetta. Real LaunchServices launches test registration, no per-app data folders, repeat launch and process adoption, state reload, explicit direct-launch environment overrides, delivery of a credential-free loopback proxy address, stale metadata after an external relaunch and bridge termination with its watched app. Existing profile creation remains available to known adapters. Fixture applications make no network requests and use only scratch data.
+- The AnyDesk service-only regression failed before the fix: a same-bundle prohibited worker started directly through `NSTask` was selected as the app window. The fixed suite keeps that worker alive during ordinary and proxy launches, rejects persisted service identities, recovers directly started UI processes without a LaunchServices date through kernel birth timestamps, rejects changed timestamps, prefers regular UI for ordinary apps and preserves ambiguity for known account adapters. Read-only diagnosis of installed AnyDesk 9.8.1 confirmed a prohibited tray process with no LaunchServices launch date; no real AnyDesk service was stopped or modified.
+- Main-window renders in English and Russian reviewed for the ordinary-app card and its manual-proxy instructions.
+- Proxy acceptance now waits for its refusing HTTP fixture to consume 64 KiB before returning 407, explicitly proving the non-replayable streaming precondition. The earlier immediate refusal raced the upload and could legitimately allow safe failover. The deterministic rejection case passed 20 isolated repetitions; the existing 8 MiB integrity cases remain unchanged.
+
+Compatibility limits: native applications may ignore proxy environment variables. The native fixture verifies configuration delivery and bridge lifetime, not the traffic route of AnyDesk or another vendor app. AnyDesk's own HTTP-proxy settings require manual host/port entry; the dynamic port changes on a new launch, and an installed background service can outlive the watched GUI process. No real AnyDesk session, account, provider proxy, Intel hardware or macOS 13–15 acceptance was performed for this change. The release version remains 0.12.1 until a release is prepared.
+
 ## Status of 0.12.1
 
 0.12.1 changes only where AppDeck looks for Codex's helper. ChatGPT 26.924 (Codex CLI 0.158.0-alpha.2.1) moved it from `Contents/Resources/codex` to `Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex`, the path its desktop code starts on macOS. Verified on macOS 26.2, Apple Silicon, with that ChatGPT build:

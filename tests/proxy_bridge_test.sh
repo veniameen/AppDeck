@@ -28,7 +28,7 @@ python3 tests/proxy_fixture.py "$WORK" > "$WORK/ports" 2> "$WORK/fixture.log" &
 PIDS+=($!)
 for _ in $(seq 600); do grep -q '^dead ' "$WORK/ports" 2>/dev/null && break; sleep 0.1; done # up to 60 s on a slow CI machine
 port(){ awk -v k="$1" '$1==k{print $2}' "$WORK/ports"; }
-T=$(port target); T6=$(port target6); H=$(port http); S=$(port socks); SILENT=$(port silent); DEAD=$(port dead); HANGUP=$(port hangup)
+T=$(port target); T6=$(port target6); H=$(port http); STREAM_AUTH=$(port httpstreamauth); S=$(port socks); SILENT=$(port silent); DEAD=$(port dead); HANGUP=$(port hangup)
 [[ -n "$T" && -n "$DEAD" ]] || { cat "$WORK/fixture.log"; cat "$WORK/ports"; python3 --version; echo "FAIL: the proxy fixture did not start"; exit 1; }
 BODY='appdeck-proxy-target'
 seen(){ "${DCURL[@]}" "http://127.0.0.1:$T/stats" | python3 -c 'import json,sys;print(json.load(sys.stdin).get(sys.argv[1],0))' "$1"; }
@@ -131,9 +131,15 @@ start_bridge plainfo "scheme http" "endpoint 127.0.0.1 $H $UH $WRONG" "endpoint 
 B0=$(seen http_auth_bad)
 expect "plain failover: wrong login on endpoint 0, a plain request first (no tunnel before it) succeeds" same "$(get "$BPORT")/$(( $(seen http_auth_bad)-B0 ))" "$BODY/1"
 expect "plain failover: the next plain request and tunnel go straight to endpoint 1" same "$(get "$BPORT")$(tunnel_get "$BPORT")/$(( $(seen http_auth_bad)-B0 ))" "$BODY$BODY/1"
-start_bridge plainbody "scheme http" "endpoint 127.0.0.1 $H $UH $WRONG" "endpoint 127.0.0.1 $H $UH $PH"; watch plainbody "$KEEP"
+# An immediate 407 may win the race with the upload, in which case safe replay is allowed. This
+# fixture drains 64 KiB of body before returning 407 to establish the non-replayable streaming case.
+# Keep the upload within the bridge's bounded error-response drain, so curl can read the 502.
+head -c 131072 "$WORK/big.bin" > "$WORK/streaming.bin"
+start_bridge plainbody "scheme http" "endpoint 127.0.0.1 $STREAM_AUTH $UH $WRONG" "endpoint 127.0.0.1 $H $UH $PH"; watch plainbody "$KEEP"
 B0=$(seen http_auth_bad)
-CODE=$("${PCURL[@]}" -x "http://127.0.0.1:$BPORT" -H 'Expect:' --data-binary @"$WORK/big.bin" -o /dev/null -w '%{http_code}' "http://127.0.0.1:$T/echo")
+STREAM_B0=$(seen http_auth_bad_after_body)
+CODE=$("${PCURL[@]}" -x "http://127.0.0.1:$BPORT" -H 'Expect:' --data-binary @"$WORK/streaming.bin" -o /dev/null -w '%{http_code}' "http://127.0.0.1:$T/echo")
+expect "plain failover: the refusing upstream consumed 64 KiB of body before its 407" same "$(( $(seen http_auth_bad_after_body)-STREAM_B0 ))" 1
 expect "plain failover: a 407 after the body started streaming gets 502 (the body cannot be sent again)" same "$CODE" 502
 expect "plain failover: after that 502 the next request starts at endpoint 1" same "$(get "$BPORT")/$(( $(seen http_auth_bad)-B0 ))" "$BODY/1"
 start_bridge plainsilent "scheme http" "endpoint 127.0.0.1 $SILENT $UH $PH" "endpoint 127.0.0.1 $H $UH $PH"; watch plainsilent "$KEEP"

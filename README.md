@@ -23,6 +23,7 @@ AppDeck is a small native macOS app for people who work in the same desktop app 
 
 ## Features
 
+- **Any installed app.** Add a macOS `.app`, including AnyDesk, and launch it with its existing data. Apps without a profile adapter get one ordinary launch card, with an optional proxy; applications that require manual proxy setup can use the card's local proxy address.
 - **One card per account.** The app's icon with the profile's colour badge, the signed-in account and its plan, a status light, and the usage limits with their reset times. **Launch** starts the profile; a running one offers **Show window**, **Restart** and **Close** (a normal quit request, never a force kill).
 - **Separate sign-ins, shared work.** Each profile gets its own private data folder, so every window stays signed in to its own account. For Codex you can share settings, chat history, projects and automations between the accounts — without copying a single database or token.
 - **Usage limits at a glance.** The weekly, 5-hour and per-model windows of every Codex and Claude account, asked from the apps' own tools. Meters stay neutral while there is room, turn amber below 25 % and red below 10 %; the account with the most headroom stands out in the side panel.
@@ -67,8 +68,9 @@ The panel never becomes the key window and never records the screen: rows show p
 | VS Code, Cursor | Its own user data and extensions folder | — |
 | Chrome, Brave, Edge, Chromium | Its own browser profile folder | — |
 | Other Electron apps | Its own user data folder (experimental) | — |
+| Any other macOS `.app` | Existing app data; no separate profiles | Ordinary launch; optional proxy where the app supports it |
 
-The original app is never copied or modified: AppDeck starts it with its own documented switches.
+The original app is never copied or modified. Supported apps can also use **Ordinary launch (no profiles)** instead of a profile adapter.
 
 ## Install
 
@@ -88,12 +90,14 @@ AppDeck is signed ad hoc, not with a Developer ID, and is not notarized. On firs
 
 ## Quick start
 
-1. Click **Add app** in the sidebar and choose `ChatGPT.app`, `Claude.app` or another supported app.
-2. Create a profile per account with **New profile**. For Codex, **Shared settings → Connect Codex…** keeps your current Codex as the primary profile and lets the others share its workspace.
+1. Click **Add app** in the sidebar and choose any installed `.app`. Apps without a profile adapter can be launched immediately with their current data.
+2. For separate accounts in a supported app, create a profile per account with **New profile**. For Codex, **Shared settings → Connect Codex…** keeps your current Codex as the primary profile and lets the others share its workspace.
 3. **Launch** a profile and sign in inside its window. Sign in to one new account at a time.
 4. Turn on **Account limits…** (at the bottom of the Profiles page) to see what every account has left, and press <kbd>⌃</kbd><kbd>⌥</kbd><kbd>Space</kbd> to switch from anywhere.
 
 The [user guide](docs/USER_GUIDE.md) explains every option; it is also available inside the app under **About → User guide**.
+
+For an ordinary app, **No proxy** is the default. Choose a proxy on its card if needed. Some native apps ignore proxy environment settings: in AnyDesk, open **Settings → Connection → HTTP-Proxy** and enter the host and port from AppDeck's **Copy address**. Launch with a proxy first; the local address changes after each launch and lasts while the app's process runs. Routing and background services are not automatically verified. See [AnyDesk's proxy settings](https://support.anydesk.com/docs/settings).
 
 ## Keyboard shortcuts
 
@@ -116,6 +120,7 @@ The shortcuts are registered hot keys: no Input Monitoring permission is needed.
 
 ## Limitations
 
+- Ordinary launch keeps the app's existing data and sign-in. Proxy support depends on the application; native apps may require manual setup, and a background service that outlives the app needs its own configuration.
 - Not notarized; local builds are signed ad hoc, so macOS may ask for Accessibility again after an update.
 - Codex's `app-server` protocol and desktop project cache are internal and may change with a new `ChatGPT.app`; AppDeck then shows “no data” or skips the sync instead of guessing.
 - Some scenarios are not verified yet — for example several different real accounts sharing history at the same time, multi-monitor setups and Intel hardware. The current status is in [docs/TESTING.md](docs/TESTING.md).

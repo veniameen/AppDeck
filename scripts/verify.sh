@@ -20,6 +20,29 @@ python3 tools/verify_bundle.py "$APP"
 # failover, check results, lifecycle and the loopback-only listener.
 tests/proxy_bridge_test.sh "$APP"
 
+# Unknown native apps: real LaunchServices launch/adoption, no isolated data folders,
+# environment-only proxy settings and bridge lifecycle, on both executable slices.
+# The test runner is a bundle so production proxyHelper() finds its own real helper.
+GENERIC_TEST_APP="$OUT/GenericAppTest.app"
+mkdir -p "$GENERIC_TEST_APP/Contents/MacOS"
+"${STRICT[@]}" -O1 -arch arm64 -arch x86_64 tests/generic_app_fixture.cpp -framework AppKit -lobjc -o "$OUT/generic-app-fixture"
+"${STRICT[@]}" -O1 -arch arm64 -arch x86_64 tests/generic_app_test.cpp -framework AppKit -lobjc -o "$GENERIC_TEST_APP/Contents/MacOS/GenericAppTest"
+cp "$APP/Contents/MacOS/appdeck-proxy" "$GENERIC_TEST_APP/Contents/MacOS/"
+cat > "$GENERIC_TEST_APP/Contents/Info.plist" <<'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>CFBundleExecutable</key><string>GenericAppTest</string>
+<key>CFBundleIdentifier</key><string>local.appdeck.generic-app-test</string>
+<key>CFBundlePackageType</key><string>APPL</string>
+<key>LSUIElement</key><true/>
+</dict></plist>
+PLIST
+/usr/bin/codesign --force --sign - "$GENERIC_TEST_APP" >/dev/null 2>&1
+for ARCH in arm64 x86_64; do
+  arch -"$ARCH" "$GENERIC_TEST_APP/Contents/MacOS/GenericAppTest" "$OUT/generic-app-fixture"
+done
+
 # Production project adapter and group synchronizer against isolated profiles. These tests never
 # sign in, send a model turn or open a real profile database.
 for t in project_server_sync_test group_sync_test; do

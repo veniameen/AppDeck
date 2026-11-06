@@ -5,6 +5,7 @@ AppDeck runs several accounts of the same desktop app side by side on macOS — 
 ## Contents
 
 - [Getting started](#getting-started)
+- [Ordinary apps, including AnyDesk](#ordinary-apps-including-anydesk)
 - [What is separate and what is shared](#what-is-separate-and-what-is-shared)
 - [Codex: use your current Codex as the base](#codex-use-your-current-codex-as-the-base)
 - [Shared history and projects](#shared-history-and-projects)
@@ -24,12 +25,28 @@ AppDeck runs several accounts of the same desktop app side by side on macOS — 
 
 ![The main window: four Codex profiles with their accounts and usage limits](images/main-window.png)
 
-1. **Add an app.** Click **Add app** in the sidebar and choose an installed app. AppDeck detects the adapter: Codex (`ChatGPT.app`), Claude Desktop, VS Code / Cursor, Chrome / Brave / Edge / Chromium, or an experimental mode for other Electron apps. The original `.app` is never copied or modified.
-2. **Create profiles.** Each profile is an ordinary macOS window of that app with its own private data folder and therefore its own sign-in. Use **New profile** for more.
+1. **Add an app.** Click **Add app** in the sidebar and choose any installed macOS `.app`. AppDeck detects profile adapters for Codex (`ChatGPT.app`), Claude Desktop, VS Code / Cursor, Chromium browsers and other Electron apps. Other apps get one ordinary launch card, using their existing data. The original `.app` is never copied or modified.
+2. **Create profiles if needed.** In a supported app, each profile has its own private data folder and sign-in. Use **New profile** for more. To use the app's existing data instead, select **Ordinary launch (no profiles)** when adding it.
 3. **Launch and sign in.** Click **Launch** on a card and sign in inside the app window. Sign in to one new account at a time.
 4. **Switch.** Click **Show window** on a card, press **⌘1–9** while AppDeck is active, or open the [side panel](#the-side-panel) with **⌃⌥Space** from anywhere.
 
 A running profile's card offers **Show window** (bring it forward) and two round buttons: **Restart** ↻ (quit, then launch again once the process has really exited) and **Close** ✕ (a normal quit request — never a force kill). A stopped card has **Launch**, the profile folder and, after a failed start, a warning button that explains what happened. Every round button names itself in its tooltip. If a window was closed with the red button, AppDeck reopens it: it sends the same *reopen* event the Dock icon sends, addressed to that very process.
+
+## Ordinary apps, including AnyDesk
+
+Choose `AnyDesk.app` or another installed `.app` with **Add app**. An app without a profile adapter is ready to **Launch** immediately. It keeps its current settings, data and sign-in; AppDeck creates no profile folders. Its card also offers **Show window**, **Restart** and **Close**, and the application appears in the side panel and shortcuts.
+
+A background service alone does not count as the application window: **Launch** opens the main app even when a service such as AnyDesk's is already running. If several eligible application instances are open, close the extra ones before retrying; AppDeck does not choose one arbitrarily. If macOS cannot confirm the launched process, AppDeck reports the error.
+
+**No proxy** is selected initially. The card's **Proxy** menu can choose a saved proxy, the global default or no proxy. The choice applies on the next launch; an app already running keeps its existing connection. AppDeck passes proxy settings to the application, but some native apps require their own connection settings. A requested proxy does not confirm that traffic uses it.
+
+For AnyDesk:
+
+1. Add the upstream proxy on AppDeck's **Proxy** page, select it on AnyDesk's card, and launch AnyDesk from AppDeck.
+2. Click **Copy address** beside **Local proxy address**. It contains the local host `127.0.0.1` and a port; it contains no upstream credentials.
+3. In AnyDesk, open **Settings → Connection → HTTP-Proxy** and enter that local host and port. AnyDesk documents this manual proxy option in its [settings guide](https://support.anydesk.com/docs/settings).
+
+The local address changes after each launch and works only while the app's process runs. Update the port in AnyDesk after a new launch. To return to a direct connection after manual setup, turn the proxy off in AnyDesk's settings as well as choosing **No proxy** in AppDeck. A separately installed background service can outlive the GUI process and is outside this bridge's lifetime; AppDeck does not configure that service or verify AnyDesk's traffic route.
 
 ## What is separate and what is shared
 
@@ -42,6 +59,7 @@ AppDeck separates **data**, not security domains: every profile runs as your mac
 | VS Code / Cursor | Own `--user-data-dir` and `--extensions-dir` | Nothing |
 | Chromium browsers | Own `--user-data-dir` | Nothing |
 | Other Electron apps | Own `--user-data-dir` (experimental) | Nothing |
+| Ordinary launch | Existing app data and sign-in; no profile isolation | The app's usual data |
 
 Sign-ins, cookies and window data are **never** copied or shared between profiles.
 
@@ -174,6 +192,8 @@ Some networks reach OpenAI or Anthropic only through a proxy — for example whe
 1. Open **Proxy** in the sidebar and click **Add proxy**. Give it a name, choose the type and paste the addresses your provider gave you, one per line: `host:port` or `host:port:login:password` (the password may contain `:`). A login and password below the list apply to the addresses that have none of their own.
 2. **Check** opens a tunnel to `api.openai.com:443` through every address — no data is sent — and shows how many answer and how fast.
 3. Choose the **Default proxy** for all profiles, or give a profile its own choice in its card's **•••** menu → **Proxy**: *Default*, *No proxy* or a specific proxy. The card's status line shows it: “Not running · via Office”.
+
+Ordinary apps start with **No proxy** and choose their proxy directly on the application card. They receive proxy environment settings without Chromium launch switches; applications may ignore those settings. **Copy address** supports manual setup as described for [AnyDesk](#ordinary-apps-including-anydesk).
 
 When a profile with a proxy starts, AppDeck starts a small private bridge for that window (`appdeck-proxy`, part of AppDeck): it listens on `127.0.0.1` only, takes the first address that answers and adds the login and password, which Chromium-based apps cannot send themselves. The app is started with `--proxy-server` pointing at the bridge, `--disable-quic`, a WebRTC policy that keeps UDP inside the proxy, and `HTTPS_PROXY`/`ALL_PROXY`/`NO_PROXY` plus `NODE_USE_ENV_PROXY=1` for its Node and command-line helpers. The bridge keeps running while the window runs — even if you quit AppDeck — and exits with it. Limit checks of that profile go through the same proxy.
 

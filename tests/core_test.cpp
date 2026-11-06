@@ -10,12 +10,23 @@ int main(){
  check(deck::inside("/data/AppDeck","/data/AppDeck/profiles/id"));check(!deck::inside("/data/AppDeck","/data/AppDeck2"));
  check(!deck::safeLeaf("../evil"));check(!deck::safeLeaf(".."));check(deck::safeLeaf("config.toml"));
  check(deck::detect("com.openai.codex","Codex",true)==deck::Adapter::Codex);
- check(deck::detect("com.apple.TextEdit","TextEdit",false)==deck::Adapter::Unsupported);
+ check(deck::detect("com.apple.TextEdit","TextEdit",false)==deck::Adapter::Generic);
+ check(deck::detect("com.philandro.anydesk","AnyDesk",false)==deck::Adapter::Generic);
+ check(deck::detect(nullptr,"Unknown",false)==deck::Adapter::Generic);
  check(deck::detect("com.microsoft.VSCode","Code",true)==deck::Adapter::VSCode);
  check(deck::detect("com.google.Chrome","Chrome",false)==deck::Adapter::Chromium);
  check(deck::detect("com.other.app","Other",true)==deck::Adapter::Electron);
  check(deck::detect("com.anthropic.claudefordesktop","Claude",true)==deck::Adapter::Claude);check(deck::detect("com.anthropic.claudefordesktop","Claude",false)==deck::Adapter::Claude);
  check(deck::adapter("claude")==deck::Adapter::Claude);check(deck::equal(deck::adapterName(deck::Adapter::Claude),"claude"));check(deck::adapter(deck::adapterName(deck::Adapter::Electron))==deck::Adapter::Electron);check(deck::adapter("Claude")==deck::Adapter::Unsupported);
+ check(deck::adapter("generic")==deck::Adapter::Generic);check(deck::equal(deck::adapterName(deck::Adapter::Generic),"generic"));
+ check(deck::adapter(deck::adapterName(deck::Adapter::Generic))==deck::Adapter::Generic);
+ check(deck::adapter("unsupported")==deck::Adapter::Unsupported);check(deck::adapter("anydesk")==deck::Adapter::Unsupported);check(deck::adapter(nullptr)==deck::Adapter::Unsupported);check(deck::adapter("")==deck::Adapter::Unsupported);
+ // Unknown native apps retain their normal data and must never receive Chromium switches.
+ check(!deck::supportsProfiles(deck::Adapter::Generic));check(!deck::proxyUsesChromiumFlags(deck::Adapter::Generic));
+ check(!deck::supportsProfiles(deck::Adapter::Unsupported));check(!deck::proxyUsesChromiumFlags(deck::Adapter::Unsupported));
+ for(auto a:{deck::Adapter::Codex,deck::Adapter::VSCode,deck::Adapter::Chromium,deck::Adapter::Electron,deck::Adapter::Claude}){
+  check(deck::supportsProfiles(a));check(deck::proxyUsesChromiumFlags(a));check(deck::adapter(deck::adapterName(a))==a);
+ }
  char out[8192];using R=deck::ConfigResult;
  check(deck::codexConfig("model = \"test\"\n",out,sizeof out)==R::Ok);
  check(std::strstr(out,"cli_auth_credentials_store = \"file\""));check(std::strstr(out,"model = \"test\""));

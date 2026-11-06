@@ -2,6 +2,17 @@
 
 All notable changes to AppDeck. Verification details for the current release are in [docs/TESTING.md](docs/TESTING.md).
 
+## Unreleased
+
+### Added
+
+- **Add app** accepts any installed macOS `.app`, including AnyDesk. Apps without a profile adapter get one launch card using their existing data, with no profile folders. Supported apps also offer **Ordinary launch (no profiles)**.
+- Ordinary app cards offer an optional proxy and **Copy address** for applications that need proxy setup in their own settings. The address belongs to the local bridge and changes on each launch. Native apps receive proxy environment settings without Chromium switches; routing depends on the app and is not verified.
+
+### Fixed
+
+- **Launch** no longer mistakes AnyDesk's background service for its application window. AppDeck selects the main application process, starts it when only background workers exist, and keeps multiple eligible application instances ambiguous. Native processes without a LaunchServices launch date use the public kernel birth timestamp for identity; an unavailable identity now reports a launch error instead of returning silently.
+
 ## 0.12.1
 
 ### Fixed

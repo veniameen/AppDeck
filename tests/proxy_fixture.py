@@ -161,6 +161,8 @@ class Web6(Web):
 
 
 class HttpProxy(socketserver.BaseRequestHandler):
+    reject_after_body_bytes = 0
+
     def handle(self):
         try:
             line, headers, rest = read_head(self.request)
@@ -168,6 +170,20 @@ class HttpProxy(socketserver.BaseRequestHandler):
             return
         auth = [h.split(':', 1)[1].strip() for h in headers if h.lower().startswith('proxy-authorization:')]
         if auth != ['Basic ' + base64.b64encode(USER + b':' + PASSWORD).decode()]:
+            if self.reject_after_body_bytes:
+                # Exceed the bridge's 16 KiB request preload before refusing: the body must have
+                # entered relay(), so this request can no longer be replayed to another endpoint.
+                remaining = self.reject_after_body_bytes - len(rest)
+                self.request.settimeout(5)
+                try:
+                    while remaining > 0:
+                        chunk = self.request.recv(min(remaining, 65536))
+                        if not chunk:
+                            return
+                        remaining -= len(chunk)
+                except OSError:
+                    return
+                count('http_auth_bad_after_body')
             count('http_auth_bad')
             self.request.sendall(b'HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm="fixture"\r\n'
                                  b'Content-Length: 0\r\nConnection: close\r\n\r\n')
@@ -208,6 +224,10 @@ class HttpProxy(socketserver.BaseRequestHandler):
         upstream.settimeout(None)
         forward = ' '.join((method, '/' + path, version)) + '\r\n' + ''.join(h + '\r\n' for h in kept) + '\r\n'
         pipe(self.request, upstream, forward.encode('latin-1') + rest)
+
+
+class HttpStreamingAuthProxy(HttpProxy):
+    reject_after_body_bytes = 65536
 
 
 class SocksProxy(socketserver.BaseRequestHandler):
@@ -310,6 +330,7 @@ def main():
     ports = {
         'target': start(Web(('127.0.0.1', 0), Target)),
         'http': start(Server(('127.0.0.1', 0), HttpProxy)),
+        'httpstreamauth': start(Server(('127.0.0.1', 0), HttpStreamingAuthProxy)),
         'socks': start(Server(('127.0.0.1', 0), SocksProxy)),
         'silent': start(Server(('127.0.0.1', 0), Silent)),
     }

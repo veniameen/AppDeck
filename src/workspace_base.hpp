@@ -1,6 +1,6 @@
 // Settings source + legacy seed. Versioned group_sync.hpp owns the stopped-profile
 // project/automation reconciliation. Never mirror a complete CODEX_HOME.
-bool isMaster(Obj p){return truth(get(p,"master"));}
+bool isMaster(Obj p){return truth(get(p,"master"))||isStandalone(appFor(p));}
 Obj baseSource(Obj a){Obj s=get(a,"baseSource");return isClass(s,"NSString")?s:nullptr;}
 Obj settingsSource(Obj a){Obj s=baseSource(a);return s?s:sharedRoot(a);}
 Obj readJSON(Obj path){
@@ -117,16 +117,27 @@ Obj ownedProcess(Obj p){
  return nullptr;
 }
 bool adopt(Obj p,Obj r){
- Obj date=r?send(r,"launchDate"):nullptr;if(!date)return false;
- put(p,"pid",num(send<int>(r,"processIdentifier")));put(p,"started",real(send<double>(date,"timeIntervalSince1970")));erase(p,"lastError");erase(p,"launchCheck");return true;
+ double started=processStarted(r);if(started<=0)return false;
+ if(isMaster(p)&&send<Int>(r,"activationPolicy")==2)return false;
+ if(!running(p)||integer(get(p,"pid"))!=send<int>(r,"processIdentifier")){erase(p,"proxyUsed");erase(p,"proxyPort");}
+ put(p,"pid",num(send<int>(r,"processIdentifier")));put(p,"started",real(started));erase(p,"lastError");erase(p,"launchCheck");return true;
 }
 // Re-attach to copies that outlived a previous AppDeck session or restarted themselves.
 // The original app of a master card: the one running process of that bundle that is not a copy.
 // More than one such process is ambiguous and is left for an explicit click (which explains it).
+Obj originalCandidates(Obj a,Obj owner=nullptr){
+ Obj regular=array(),accessory=array();if(!a)return regular;Obj all=send(workspace,"runningApplications");
+ for(UInt i=0;i<count(all);++i){Obj r=at(all,i);if(send<bool>(r,"isTerminated")||!sameApp(r,a)||managedProcess(r))continue;
+  Int policy=send<Int>(r,"activationPolicy");if(policy!=0&&policy!=1)continue; // Prohibited background services cannot open a window.
+  bool tracked=false;for(UInt j=0;j<count(profiles);++j){Obj other=at(profiles,j);if(other!=owner&&running(other)&&integer(get(other,"pid"))==send<int>(r,"processIdentifier")){tracked=true;break;}}
+  if(!tracked)add(policy==0?regular:accessory,r);
+ }
+ // Known adapters can represent different signed-in accounts: preserve ambiguity across UI types.
+ if(!isStandalone(a)){for(UInt i=0;i<count(accessory);++i)add(regular,at(accessory,i));return regular;}
+ return count(regular)?regular:accessory;
+}
 Obj originalProcess(Obj p){
- Obj a=appFor(p);if(!a)return nullptr;Obj all=send(workspace,"runningApplications"),found=nullptr;
- for(UInt i=0;i<count(all);++i){Obj r=at(all,i);if(send<bool>(r,"isTerminated")||!sameApp(r,a)||managedProcess(r))continue;if(found)return nullptr;found=r;}
- return found;
+ Obj candidates=originalCandidates(appFor(p),p);return count(candidates)==1?at(candidates,0):nullptr;
 }
 bool adoptRunning(){
  bool changed=false;for(UInt i=0;i<count(profiles);++i){Obj p=at(profiles,i);
@@ -137,12 +148,7 @@ bool adoptRunning(){
  return changed;
 }
 bool attachMaster(Obj p,bool activate){
- Obj a=appFor(p),path=get(a,"path"),candidates=array();Obj all=send(workspace,"runningApplications");
- for(UInt i=0;i<count(all);++i){Obj r=at(all,i),rp=send(send(r,"bundleURL"),"path");
-  if(!rp||!same(canonical(rp),canonical(path))||send<bool>(r,"isTerminated"))continue;bool managed=managedProcess(r);
-  for(UInt j=0;j<count(profiles);++j){Obj other=at(profiles,j);if(other!=p&&running(other)&&integer(get(other,"pid"))==send<int>(r,"processIdentifier")){managed=true;break;}}
-  if(!managed)add(candidates,r);
- }
+ Obj a=appFor(p),path=get(a,"path"),candidates=originalCandidates(a,p);Obj all=send(workspace,"runningApplications");
  Obj r=nullptr;
  if(count(candidates)>1){showError(cat(str(T("Several untracked windows found — ","Найдено несколько неучтённых окон — ")),get(a,"name")),str(T("Close the extra instances manually and keep only the primary one. AppDeck does not pick an account by an arbitrary PID.","Закройте лишние экземпляры вручную, оставив только основной. AppDeck не выбирает аккаунт по случайному PID.")));return false;}
  if(count(candidates)==1)r=at(candidates,0);
@@ -154,9 +160,20 @@ bool attachMaster(Obj p,bool activate){
   bool copies=false;for(UInt j=0;j<count(all);++j){Obj other=at(all,j);Obj op=send(send(other,"bundleURL"),"path");if(op&&same(canonical(op),canonical(path))&&!send<bool>(other,"isTerminated")){copies=true;break;}}
   // A proxy for the primary window, as for any profile: its switches and environment, nothing else.
   if(proxyBlocked(p))return false;
-  Obj config=dict();proxy=proxyFor(p);
+  Obj config=dict();proxy=proxyFor(p);Obj env=nullptr,args=array();
+  if(isStandalone(a)){
+   env=cleanEnvironment();
+   // LaunchServices merges overrides with inherited variables; omission does not unset them.
+   // Neutralize only inherited values so an ordinary launch cannot retain another profile/proxy.
+   Obj inherited=send(send(cls("NSProcessInfo"),"processInfo"),"environment");
+   for(const char* k:{"OPENAI_API_KEY","CODEX_API_KEY","CODEX_ACCESS_TOKEN","OPENAI_ACCESS_TOKEN","CODEX_CHATGPT_ACCESS_TOKEN","CODEX_HOME","CODEX_SQLITE_HOME","CODEX_ELECTRON_USER_DATA_PATH","ELECTRON_RUN_AS_NODE","NODE_OPTIONS","CODEX_AUTH_JSON","CHATGPT_ACCESS_TOKEN","OPENAI_ORG_ID","OPENAI_ORGANIZATION","OPENAI_PROJECT_ID","CLAUDE_USER_DATA_DIR","ANTHROPIC_API_KEY","ANTHROPIC_AUTH_TOKEN","CLAUDE_CODE_OAUTH_TOKEN","HTTP_PROXY","HTTPS_PROXY","ALL_PROXY","http_proxy","https_proxy","all_proxy","NO_PROXY","no_proxy","NODE_USE_ENV_PROXY"})if(get(inherited,k))put(env,k,str(""));
+  }
   if(proxy){Obj why=nullptr;bridge=proxyServe(proxy,&why);if(!bridge){proxyUnavailable(proxy,why);return false;}
-   Obj env=cleanEnvironment(),args=array();proxyApply(env,args,(int)integer(get(bridge,"port")));
+   if(!env)env=cleanEnvironment();
+   if(deck::proxyUsesChromiumFlags(deck::adapter(utf8(get(a,"adapter")))))proxyApply(env,args,(int)integer(get(bridge,"port")));
+   else proxyApplyEnv(env,(int)integer(get(bridge,"port")));
+  }
+  if(env){
    Obj ek=publicConstant(appKit,"NSWorkspaceLaunchConfigurationEnvironment"),ak=publicConstant(appKit,"NSWorkspaceLaunchConfigurationArguments");
    if(!ek||!ak){proxyAbandon(bridge);showError(str(T("macOS API unavailable","API macOS недоступен")),str(T("System launch constants not found. Please send diagnostics for this macOS version.","Не найдены системные константы запуска. Отправьте диагностику этой версии macOS.")));return false;}
    send<void>(config,"setObject:forKey:",env,ek);send<void>(config,"setObject:forKey:",args,ak);}
@@ -165,11 +182,17 @@ bool attachMaster(Obj p,bool activate){
   if(!r){showError(cat(str(T("Could not open the primary window — ","Не удалось открыть основное окно — ")),get(a,"name")),err?send(err,"localizedDescription"):str(T("Open the app manually.","Запустите приложение вручную.")));return false;}
   if(managedProcess(r)){proxyAbandon(bridge);showError(str(T("A copy opened instead of the primary window","Открылась копия, а не основное окно")),str(T("macOS returned the process of an additional profile. Close the copies, open the app from the Dock and try again.","macOS вернула процесс одного из дополнительных профилей. Закройте копии, откройте приложение из Dock и повторите.")));return false;}
  }
- Obj date=send(r,"launchDate");if(!date){proxyAbandon(bridge);return false;}
- if(bridge){if(!proxyWatch(bridge,send<int>(r,"processIdentifier")))showError(str(T("The proxy bridge stopped","Мост прокси остановился")),str(T("The window was started through a bridge that is no longer running, so its connections will fail. Restart the profile.","Окно запущено через мост, который уже не работает, поэтому его соединения не пройдут. Перезапустите профиль.")));put(p,"proxyUsed",get(proxy,"name"));}
- else if(!attached)erase(p,"proxyUsed");
+ double started=processStarted(r);
+ if(started<=0||send<Int>(r,"activationPolicy")==2){
+  proxyAbandon(bridge);put(p,"lastError",str(started<=0?T("macOS could not confirm this app process. Try opening the app directly and then click Launch again.","macOS не смогла подтвердить процесс приложения. Откройте приложение напрямую и снова нажмите «Запустить»."):T("The app returned a background service instead of its window. Open the app directly and try again.","Приложение вернуло фоновую службу вместо окна. Откройте приложение напрямую и повторите запуск.")));
+  save();showError(str(T("Could not open the app window","Не удалось открыть окно приложения")),get(p,"lastError"));refresh();return false;
+ }
+ if(attached&&!running(p)){erase(p,"proxyUsed");erase(p,"proxyPort");}
+ if(bridge){if(proxyWatch(bridge,send<int>(r,"processIdentifier"))){put(p,"proxyUsed",get(proxy,"name"));put(p,"proxyPort",get(bridge,"port"));}
+  else{erase(p,"proxyUsed");erase(p,"proxyPort");showError(str(T("The proxy bridge stopped","Мост прокси остановился")),str(T("The local proxy stopped. Restart the app from AppDeck before using its proxy address.","Локальный прокси остановился. Перезапустите приложение из AppDeck, прежде чем использовать его адрес прокси.")));}}
+ else if(!attached){erase(p,"proxyUsed");erase(p,"proxyPort");}
  // An original that was already open keeps whatever it was started with; say so once when a proxy is chosen.
  if(attached&&proxyFor(p)&&!get(p,"proxyUsed")&&activate)showError(str(T("The primary window runs without the proxy","Основное окно работает без прокси")),str(T("It was already open before AppDeck started it. Close it and launch it from AppDeck to use the proxy.","Оно было открыто до запуска из AppDeck. Закройте его и запустите из AppDeck, чтобы использовать прокси.")));
- put(p,"pid",num(send<int>(r,"processIdentifier")));put(p,"started",real(send<double>(date,"timeIntervalSince1970")));erase(p,"lastError");
- if(activate)focus(r);note("Attached to original Codex without rewriting its profile or credentials.");save();refresh();return true;
+ put(p,"pid",num(send<int>(r,"processIdentifier")));put(p,"started",real(started));erase(p,"lastError");
+ if(activate)focus(r);note("Opened original application without rewriting its data or credentials.");save();refresh();return true;
 }

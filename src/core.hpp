@@ -9,16 +9,18 @@ inline bool suffix(const char* a,const char* b){auto n=length(a),m=length(b);ret
 inline bool uuid(const char* s){if(length(s)!=36)return false;for(int i=0;i<36;++i){if(i==8||i==13||i==18||i==23){if(s[i]!='-')return false;}else if(!((s[i]>='0'&&s[i]<='9')||(s[i]>='a'&&s[i]<='f')||(s[i]>='A'&&s[i]<='F')))return false;}return true;}
 inline bool inside(const char* base,const char* path){Size n=length(base);return n&&prefix(path,base)&&(path[n]=='/'||path[n]=='\0');}
 inline bool safeLeaf(const char* s){if(!s||!*s||equal(s,".")||equal(s,".."))return false;for(;*s;++s)if(*s=='/'||*s=='\\')return false;return true;}
-enum class Adapter{Codex,VSCode,Chromium,Electron,Claude,Unsupported};
-inline const char* adapterName(Adapter a){switch(a){case Adapter::Codex:return "codex";case Adapter::VSCode:return "vscode";case Adapter::Chromium:return "chromium";case Adapter::Electron:return "electron";case Adapter::Claude:return "claude";default:return "unsupported";}}
-inline Adapter adapter(const char* a){if(equal(a,"codex"))return Adapter::Codex;if(equal(a,"vscode"))return Adapter::VSCode;if(equal(a,"chromium"))return Adapter::Chromium;if(equal(a,"electron"))return Adapter::Electron;if(equal(a,"claude"))return Adapter::Claude;return Adapter::Unsupported;}
+enum class Adapter{Codex,VSCode,Chromium,Electron,Claude,Generic,Unsupported};
+inline const char* adapterName(Adapter a){switch(a){case Adapter::Codex:return "codex";case Adapter::VSCode:return "vscode";case Adapter::Chromium:return "chromium";case Adapter::Electron:return "electron";case Adapter::Claude:return "claude";case Adapter::Generic:return "generic";default:return "unsupported";}}
+inline Adapter adapter(const char* a){if(equal(a,"codex"))return Adapter::Codex;if(equal(a,"vscode"))return Adapter::VSCode;if(equal(a,"chromium"))return Adapter::Chromium;if(equal(a,"electron"))return Adapter::Electron;if(equal(a,"claude"))return Adapter::Claude;if(equal(a,"generic"))return Adapter::Generic;return Adapter::Unsupported;}
+inline bool supportsProfiles(Adapter a){return a==Adapter::Codex||a==Adapter::VSCode||a==Adapter::Chromium||a==Adapter::Electron||a==Adapter::Claude;}
+inline bool proxyUsesChromiumFlags(Adapter a){return supportsProfiles(a);}
 inline Adapter detect(const char* bundle,const char* name,bool electron){
  if(equal(bundle,"com.openai.codex")||equal(bundle,"com.openai.codex.desktop")||equal(name,"Codex"))return Adapter::Codex;
  // Claude Desktop honours CLAUDE_USER_DATA_DIR (its own switch for the Electron user-data folder).
  if(equal(bundle,"com.anthropic.claudefordesktop"))return Adapter::Claude;
  if(prefix(bundle,"com.microsoft.VSCode")||equal(bundle,"com.todesktop.230313mzl4w4u92"))return Adapter::VSCode;
  if(prefix(bundle,"com.google.Chrome")||prefix(bundle,"com.brave.Browser")||prefix(bundle,"com.microsoft.edgemac")||equal(bundle,"org.chromium.Chromium"))return Adapter::Chromium;
- return electron?Adapter::Electron:Adapter::Unsupported;
+ return electron?Adapter::Electron:Adapter::Generic;
 }
 // Set only a top-level authentication store. Preserve all workspace restrictions.
 // Reject ambiguous constructs instead of silently rewriting arbitrary TOML.

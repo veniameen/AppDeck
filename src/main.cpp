@@ -28,10 +28,12 @@ Obj currentApp();
 Obj edgeTargetScreen();void setEdgeVisible(bool);
 void edgeRefresh();void invalidateEdge();void connectBaseAction(Obj,Sel,Obj);
 void showWindowAction(Obj,Sel,Obj);void focus(Obj);bool isMaster(Obj);
+double processStarted(Obj);double processBirth(int);
 void syncBaseProjectsAction(Obj,Sel,Obj);void toggleHistoryAction(Obj,Sel,Obj);void toggleUsageAction(Obj,Sel,Obj);void usageSanitize(Obj);void usagePump();Obj cleanEnvironment();bool askUsage(Obj);void usageForce(Obj);
 bool groupSyncEnabled(Obj);Obj syncGroup(Obj,bool);void groupSyncPump(bool);void automationOwnerAction(Obj,Sel,Obj);
 bool usageProxy(Obj,Obj);void proxyProfileMenu(Obj,Obj,Int); // proxy_store.hpp / proxy_views.hpp
 Obj proxyFor(Obj);Obj proxyServe(Obj,Obj*);void proxyApply(Obj,Obj,int);bool proxyWatch(Obj,int);void proxyAbandon(Obj);bool proxyBlocked(Obj);void proxyUnavailable(Obj,Obj);
+void proxyApplyEnv(Obj,int);
 Obj color(double r,double g,double b,double a=1){return send(cls("NSColor"),"colorWithSRGBRed:green:blue:alpha:",r,g,b,a);}
 // Design tokens ("Graphite glass"): warm bone ink on dark glass. Colour appears only for state (live,
 // warn, danger) and for the profile's identity badge; controls are neutral glass.
@@ -69,6 +71,7 @@ Obj profileRoot(Obj p){if(!deck::uuid(utf8(get(p,"id"))))return nullptr;return j
 Obj sharedRoot(Obj a){if(!a||!deck::uuid(utf8(get(a,"id"))))return nullptr;return join(join(dataRoot,"Shared"),get(a,"id"));}
 Obj appFor(Obj p){for(UInt i=0;i<count(apps);++i){Obj a=at(apps,i);if(same(get(a,"id"),get(p,"appId")))return a;}return nullptr;}
 Obj currentApp(){for(UInt i=0;i<count(apps);++i)if(same(get(at(apps,i),"id"),selected))return at(apps,i);return nullptr;}
+bool isStandalone(Obj a){return a&&deck::adapter(utf8(get(a,"adapter")))==deck::Adapter::Generic;}
 Obj visibleProfiles(){Obj r=array();for(UInt i=0;i<count(profiles);++i){Obj p=at(profiles,i);if(!selected||same(get(p,"appId"),selected))add(r,p);}return r;}
 // The user's order of all profiles, one list for the side panel, ⌃⌥1…8 and the menu bar menu; the main
 // window shows the same order per app. It is the order of the profiles array in state.plist.
@@ -81,10 +84,11 @@ Obj running(Obj p){
  if(!r||send<bool>(r,"isTerminated"))return nullptr;
  Obj a=appFor(p);Obj path=send(send(r,"bundleURL"),"path");
  if(!a||!path||!same(canonical(path),canonical(get(a,"path"))))return nullptr;
- Obj launched=send(r,"launchDate");double expected=send<double>(get(p,"started"),"doubleValue");
- if(!launched||expected<=0)return nullptr;
- double dt=send<double>(launched,"timeIntervalSince1970")-expected;
- return dt>-0.1&&dt<0.1?r:nullptr;
+ if(isMaster(p)&&send<Int>(r,"activationPolicy")==2)return nullptr;
+ double started=processStarted(r),expected=send<double>(get(p,"started"),"doubleValue");if(started<=0||expected<=0)return nullptr;
+ double dt=started-expected;if(dt>-0.1&&dt<0.1)return r;
+ // LaunchServices may register a directly started process later. Its kernel birth time stays fixed.
+ double birth=processBirth(pid);dt=birth-expected;return birth>0&&dt>-0.1&&dt<0.1?r:nullptr;
 }
 void note(const char* text){
  Obj t=send(send(cls("NSDate"),"date"),"description");add(events,cat(cat(t,str("  ")),str(text)));
@@ -193,6 +197,7 @@ bool ensureShared(Obj a){
 #include "group_sync.hpp"
 Obj prepare(Obj p){
  Obj a=appFor(p),base=profileRoot(p);if(!a||!base)return str(T("App not found or invalid profile ID.","Не найдено приложение или некорректный ID профиля."));
+ if(isStandalone(a))return str(T("This app uses its existing data. Separate profiles are unavailable.","Это приложение использует существующие данные. Отдельные профили недоступны."));
  if(!mkdirPrivate(base)||!mkdirPrivate(join(base,"user-data")))return str(T("Could not create the private profile folders (0700). Symbolic links are not allowed.","Не удалось создать закрытые папки профиля (0700). Символические ссылки не допускаются."));
  if(deck::adapter(utf8(get(a,"adapter")))!=deck::Adapter::Codex)return nullptr;
  Obj ch=join(base,"codex");if(!mkdirPrivate(ch)||!ensureShared(a))return str(T("Could not prepare the Codex folders.","Не удалось подготовить папки Codex."));
@@ -302,7 +307,11 @@ void restartPump(){
 }
 void renameAction(Obj,Sel,Obj sender){Obj p=fromSender(sender);if(!p)return;Obj name=prompt(T("Profile name","Имя профиля"),T("This is only a label in AppDeck, not the account address.","Это только метка в AppDeck, не адрес аккаунта."),get(p,"name"));if(name){put(p,"name",name);save();buildUI();buildMenus();}}
 // A new profile joins the profiles of its app (a duplicate sits right after its source); it can be moved later.
-Obj newProfile(Obj a,Obj name,Int colorIndex,bool share,Obj after=nullptr){Obj p=dict();put(p,"id",uuid());put(p,"appId",get(a,"id"));put(p,"name",name);put(p,"color",num(colorIndex%6));put(p,"share",num(share));
+Obj newProfile(Obj a,Obj name,Int colorIndex,bool share,Obj after=nullptr){
+ // A standalone application has one launch entry in the existing ordered list, with no data folder.
+ if(isStandalone(a))for(UInt i=0;i<count(profiles);++i)if(same(get(at(profiles,i),"appId"),get(a,"id")))return at(profiles,i);
+ Obj p=dict();put(p,"id",uuid());put(p,"appId",get(a,"id"));put(p,"name",name);put(p,"color",num(colorIndex%6));put(p,"share",num(share));
+ if(isStandalone(a)){put(p,"master",boolean(true));put(p,"share",boolean(false));put(p,"proxy",str("none"));}
  UInt place=count(profiles),source=after?send<UInt>(profiles,"indexOfObjectIdenticalTo:",after):place;
  if(source<count(profiles))place=source+1;else for(UInt i=0;i<count(profiles);++i)if(same(get(at(profiles,i),"appId"),get(a,"id")))place=i+1;
  send<void>(profiles,"insertObject:atIndex:",p,place);return p;}
@@ -321,7 +330,7 @@ bool moveProfileInList(Obj p,Obj list,Int to){
 }
 void profileMoveUpAction(Obj,Sel,Obj sender){Obj p=fromSender(sender),ps=visibleProfiles();if(p)moveProfileInList(p,ps,(Int)send<UInt>(ps,"indexOfObjectIdenticalTo:",p)-1);}
 void profileMoveDownAction(Obj,Sel,Obj sender){Obj p=fromSender(sender),ps=visibleProfiles();if(p)moveProfileInList(p,ps,(Int)send<UInt>(ps,"indexOfObjectIdenticalTo:",p)+1);}
-void duplicateAction(Obj,Sel,Obj sender){Obj p=fromSender(sender);if(!p)return;
+void duplicateAction(Obj,Sel,Obj sender){Obj p=fromSender(sender);if(!p||isStandalone(appFor(p)))return;
  Obj name=prompt(T("New independent profile","Новый независимый профиль"),T("Only the profile settings are copied. Sign-in, history and cookies are not.","Копируются только параметры профиля. Вход, история и cookies не переносятся."),cat(get(p,"name"),str(T(" · copy"," · копия"))));
  if(name){newProfile(appFor(p),name,integer(get(p,"color"))+1,isMaster(p)||truth(get(p,"share")),p);save();buildUI();buildMenus();}}
 void profileErrorAction(Obj,Sel,Obj sender){Obj p=fromSender(sender);if(!p||!get(p,"lastError")||previewMode)return;frontForModal();
@@ -363,16 +372,18 @@ Obj menuItem(Obj menu,const char* title,const char* action,Int tag=-1,const char
 }
 void separator(Obj menu){send<void>(menu,"addItem:",send(cls("NSMenuItem"),"separatorItem"));}
 void moreAction(Obj,Sel,Obj sender){Obj p=fromSender(sender);if(!p)return;Int tag=profileIndex(p);Obj m=make("NSMenu");send<void>(m,"setAutoenablesItems:",false);
- menuItem(m,T("Rename…","Переименовать…"),"renameProfile:",tag);menuItem(m,T("Duplicate without account…","Дублировать без аккаунта…"),"duplicateProfile:",tag);separator(m);
+ bool standalone=isStandalone(appFor(p));
+ if(!standalone){menuItem(m,T("Rename…","Переименовать…"),"renameProfile:",tag);menuItem(m,T("Duplicate without account…","Дублировать без аккаунта…"),"duplicateProfile:",tag);separator(m);}
  // The order is shared with the side panel and ⌃⌥1…8; here it moves among this app's cards.
  {Obj ps=visibleProfiles();UInt place=send<UInt>(ps,"indexOfObjectIdenticalTo:",p);
   send<void>(menuItem(m,T("Move up","Переместить выше"),"profileMoveUp:",tag),"setEnabled:",place>0&&place<count(ps));send<void>(menuItem(m,T("Move down","Переместить ниже"),"profileMoveDown:",tag),"setEnabled:",place+1<count(ps));separator(m);}
  proxyProfileMenu(m,p,tag);separator(m);
- menuItem(m,T("Profile folder","Папка профиля"),"profileFolder:",tag);
+ if(standalone){Obj copy=menuItem(m,T("Copy local proxy address","Скопировать адрес локального прокси"),"copyAppProxy:",tag);send<void>(copy,"setEnabled:",proxyLocalAddress(p)!=nullptr);}
+ menuItem(m,standalone?T("Show app in Finder","Показать приложение в Finder"):T("Profile folder","Папка профиля"),"profileFolder:",tag);
  if(deck::adapter(utf8(get(appFor(p),"adapter")))==deck::Adapter::Codex)menuItem(m,truth(get(p,"share"))?T("Detach shared settings…","Отделить общие настройки…"):T("Use shared settings…","Подключить общие настройки…"),"toggleShare:",tag);
  separator(m);Obj again=menuItem(m,T("Restart…","Перезапустить…"),"restartProfile:",tag);send<void>(again,"setEnabled:",running(p)!=nullptr);
  Obj stop=menuItem(m,T("Close instance…","Закрыть экземпляр…"),"stopProfile:",tag);send<void>(stop,"setEnabled:",running(p)!=nullptr);
- menuItem(m,T("Remove from AppDeck…","Убрать из менеджера…"),"removeProfile:",tag);
+ menuItem(m,T("Remove from AppDeck…","Убрать из менеджера…"),standalone?"removeApp:":"removeProfile:",tag);
  send<bool>(m,"popUpMenuPositioningItem:atLocation:inView:",(Obj)nullptr,Point{0,30},sender);drop(m);
 }
 Obj pickApp(){
@@ -489,6 +500,19 @@ Obj popup(Obj parent,Rect f,const char* const* choices,UInt n,Int selectedIndex)
  Obj p=send(send(cls("NSPopUpButton"),"alloc"),"initWithFrame:pullsDown:",f,false);
  for(UInt i=0;i<n;++i)send<void>(p,"addItemWithTitle:",str(choices[i]));send<void>(p,"selectItemAtIndex:",selectedIndex);send<void>(parent,"addSubview:",p);drop(p);return p;
 }
+Obj registerApplication(Obj path,deck::Adapter adapter,bool primary){
+ if(adapter==deck::Adapter::Unsupported||!deck::suffix(utf8(path),".app")||!exists(join(path,"Contents/Info.plist")))return nullptr;
+ for(UInt i=0;i<count(apps);++i)if(same(canonical(get(at(apps,i),"path")),canonical(path)))return at(apps,i);
+ Obj bundle=send(cls("NSBundle"),"bundleWithPath:",path),info=send(bundle,"infoDictionary");
+ Obj name=get(info,"CFBundleDisplayName");if(!name)name=get(info,"CFBundleName");if(!name)name=send(send(path,"lastPathComponent"),"stringByDeletingPathExtension");
+ if(!send(bundle,"executablePath"))return nullptr;
+ Obj item=dict();put(item,"id",uuid());put(item,"name",name);put(item,"path",canonical(path));put(item,"bundleId",get(info,"CFBundleIdentifier")?get(info,"CFBundleIdentifier"):str(""));put(item,"adapter",str(deck::adapterName(adapter)));
+ if(!isStandalone(item)&&!ensureShared(item))return nullptr;
+ add(apps,item);
+ if(isStandalone(item))newProfile(item,name,(Int)count(profiles),false);
+ else if(primary&&adapter!=deck::Adapter::Codex){Obj original=newProfile(item,str(T("Primary · current","Основной · текущий")),0,false);put(original,"master",boolean(true));}
+ return item;
+}
 void chooseApplication(Obj,Sel,Obj){
  Obj path=pickApp();if(!path)return;
  if(!deck::suffix(utf8(path),".app")||!exists(join(path,"Contents/Info.plist"))){showError(str(T("This is not a macOS app","Это не приложение macOS")),str(T("Choose an .app bundle with an Info.plist.","Выберите пакет .app с Info.plist.")));return;}
@@ -498,31 +522,35 @@ void chooseApplication(Obj,Sel,Obj){
  bool electron=exists(join(path,"Contents/Frameworks/Electron Framework.framework"));
  auto detected=deck::detect(utf8(bid),utf8(name),electron);
  bool codexCandidate=detected==deck::Adapter::Codex||(electron&&same(name,str("ChatGPT")));
- if(detected==deck::Adapter::Unsupported&&!codexCandidate){showError(str(T("No adapter for this .app","Для этого .app нет адаптера")),str(T("This version supports profiles for Codex, Claude Desktop, VS Code/Cursor and Chromium. Other Electron apps have an experimental mode. Copying an arbitrary native .app does not separate its accounts.","Эта версия поддерживает профили Codex, VS Code/Cursor и Chromium. Для прочих Electron-приложений доступен экспериментальный режим. Копирование произвольного нативного .app не разделяет его аккаунты.")));return;}
+ if(detected==deck::Adapter::Generic){
+  Obj item=registerApplication(path,deck::Adapter::Generic,false);
+  if(!item){showError(str(T("Could not add the app","Не удалось добавить приложение")),str(T("Choose a macOS .app bundle with an executable.","Выберите пакет приложения macOS .app с исполняемым файлом.")));return;}
+  drop(selected);selected=keep(get(item,"id"));page=0;save();buildUI();buildMenus();note("Standalone application registered without profile folders.");return;
+ }
  Obj a=make("NSAlert");send<void>(a,"setMessageText:",cat(str(T("Add ","Добавить ")),name));
  send<void>(a,"setInformativeText:",str(T("The original .app is not modified. AppDeck creates profile folders, not copies of the program: each profile has its own sign-in. With the Codex adapter, tokens are kept in auth.json inside the private profile folder, not in the Keychain. Claude Desktop gets its own data folder through its CLAUDE_USER_DATA_DIR variable; the settings and history of its Code tab (~/.claude) stay shared. Check compatibility with your app version.","Исходное .app не изменяется. Создаются папки профилей, а не копии программы: у каждого профиля свой вход. В адаптере Codex токены хранятся в auth.json внутри закрытой папки профиля, а не в Keychain. Claude Desktop получает свою папку данных через штатную переменную CLAUDE_USER_DATA_DIR; настройки и история вкладки Code (~/.claude) остаются общими. Совместимость нужно проверить в вашей версии приложения.")));
  Obj accessory=send(send((Obj)deckViewClass,"alloc"),"initWithFrame:",rect(0,0,430,104));
  label(accessory,T("Adapter","Адаптер"),rect(0,6,115,20));
- const char* choices[]={"Codex","VS Code / Cursor","Chromium / Chrome / Edge",T("Electron (experimental)","Electron (экспериментальный)"),"Claude Desktop"};
+ const char* choices[]={"Codex","VS Code / Cursor","Chromium / Chrome / Edge",T("Electron (experimental)","Electron (экспериментальный)"),"Claude Desktop",T("Ordinary launch (no profiles)","Обычный запуск (без профилей)")};
  Int index=codexCandidate?0:detected==deck::Adapter::VSCode?1:detected==deck::Adapter::Chromium?2:detected==deck::Adapter::Claude?4:3;
- Obj selector=popup(accessory,rect(120,0,305,28),choices,5,index);
+ Obj selector=popup(accessory,rect(120,0,305,28),choices,6,index);
  // No profile count here: profiles are added one by one with “New profile”, as many as needed.
- label(accessory,T("Then add a profile per account with “New profile” and sign in separately in each window.","Затем добавьте по профилю на каждый аккаунт кнопкой «Новый профиль» и войдите отдельно в каждом окне."),rect(0,38,428,34),12,muted());
+ label(accessory,T("For separate accounts, add profiles with “New profile”. Ordinary launch uses the app’s existing data.","Для разных аккаунтов добавляйте профили кнопкой «Новый профиль». Обычный запуск использует текущие данные приложения."),rect(0,38,428,34),12,muted());
  Obj current=checkbox(accessory,T("Add the existing sign-in (current window) as the primary profile","Добавить уже установленный вход (текущее окно) как основной профиль"),rect(0,80,428,22),index!=0);send<void>(current,"setEnabled:",index!=0);
  send<void>(current,"setToolTip:",str(T("The primary profile is the app itself with its usual data. For Codex it is added when you connect the base workspace.","Основной профиль — это само приложение с его обычными данными. Для Codex он добавляется при подключении базовой среды.")));
  send<void>(a,"setAccessoryView:",accessory);send(a,"addButtonWithTitle:",str(T("Add","Добавить")));send(a,"addButtonWithTitle:",str(T("Cancel","Отмена")));
  if(send<Int>(a,"runModal")==1000){
-  const char* adapters[]={"codex","vscode","chromium","electron","claude"};Int idx=send<Int>(selector,"indexOfSelectedItem");if(idx<0||idx>4)idx=3;
-  Obj item=dict();put(item,"id",uuid());put(item,"name",name);put(item,"path",path);put(item,"bundleId",bid?bid:str(""));put(item,"adapter",str(adapters[idx]));
-  if(!ensureShared(item)){showError(str(T("No access to the data folder","Нет доступа к папке данных")),str(T("Could not create the shared settings.","Не удалось создать общие настройки.")));drop(accessory);drop(a);return;}
-  add(apps,item);drop(selected);selected=keep(get(item,"id"));
-  if(idx!=0&&send<Int>(current,"state")==1){Obj original=newProfile(item,str(T("Primary · current","Основной · текущий")),0,false);put(original,"master",boolean(true));}
+  const deck::Adapter adapters[]={deck::Adapter::Codex,deck::Adapter::VSCode,deck::Adapter::Chromium,deck::Adapter::Electron,deck::Adapter::Claude,deck::Adapter::Generic};Int idx=send<Int>(selector,"indexOfSelectedItem");if(idx<0||idx>5)idx=3;
+  Obj item=registerApplication(path,adapters[idx],send<Int>(current,"state")==1);
+  if(!item){showError(str(T("Could not add the app","Не удалось добавить приложение")),str(T("Check the app executable and access to AppDeck’s data folder.","Проверьте исполняемый файл приложения и доступ к папке данных AppDeck.")));drop(accessory);drop(a);return;}
+  drop(selected);selected=keep(get(item,"id"));
   page=0;save();buildUI();buildMenus();note("Application registered; no application bundle was modified.");
   if(idx==0)connectBaseAction(nullptr,nullptr,nullptr);
  }
  drop(accessory);drop(a);
 }
 void newProfileAction(Obj,Sel,Obj){Obj a=currentApp();if(!a){chooseApplication(nullptr,nullptr,nullptr);return;}
+ if(isStandalone(a))return;
  Obj name=prompt(T("New profile","Новый профиль"),T("The account starts empty. Sign in after launching it.","Аккаунт будет пустым. Войдите в него после запуска."),str(T("New account","Новый аккаунт")));if(!name)return;
  newProfile(a,name,(Int)count(profiles),deck::adapter(utf8(get(a,"adapter")))==deck::Adapter::Codex);page=0;save();buildUI();buildMenus();}
 void selectAppAction(Obj,Sel,Obj sender){Int n=send<Int>(sender,"tag");if(n<0||(UInt)n>=count(apps))return;drop(selected);selected=keep(get(at(apps,n),"id"));page=0;save();buildUI();buildMenus();}
@@ -534,7 +562,7 @@ void changePathAction(Obj,Sel,Obj){Obj a=currentApp();if(!a)return;for(UInt i=0;
 }
 void removeAppAction(Obj,Sel,Obj){Obj a=currentApp();if(!a)return;
  for(UInt i=0;i<count(profiles);++i)if(same(get(at(profiles,i),"appId"),get(a,"id"))&&running(at(profiles,i))){showError(str(T("Close the instances first","Сначала закройте экземпляры")),str(T("A running group cannot be removed.","Запущенную группу удалять нельзя.")));return;}
- if(!confirm(T("Remove the app and its profiles?","Убрать приложение и его профили?"),T("Only the manager's entries are removed. The app itself and its data folders stay on disk.","Удаляются только записи менеджера. Само приложение и папки данных останутся на диске."),T("Remove","Убрать")))return;
+ if(!confirm(isStandalone(a)?T("Remove the app from AppDeck?","Убрать приложение из AppDeck?"):T("Remove the app and its profiles?","Убрать приложение и его профили?"),T("Only the manager's entries are removed. The app itself and its data folders stay on disk.","Удаляются только записи менеджера. Само приложение и папки данных останутся на диске."),T("Remove","Убрать")))return;
  for(Int i=(Int)count(profiles)-1;i>=0;--i)if(same(get(at(profiles,i),"appId"),get(a,"id")))send<void>(profiles,"removeObjectAtIndex:",(UInt)i);
  send<void>(apps,"removeObjectIdenticalTo:",a);drop(selected);selected=count(apps)?keep(get(at(apps,0),"id")):nullptr;save();buildUI();buildMenus();
 }
@@ -722,6 +750,32 @@ Obj footerNote(double x,double y,double w,const char* glyph,Obj text){
  Obj l=labelObj(rootView,text,rect(tx,y+8,w-(tx-x),16),12,faint(),0);send<void>(l,"setLineBreakMode:",(Int)4);return l;
 }
 #include "proxy_views.hpp"
+void buildStandalonePage(double x,double w,double footY,Obj a){
+ double titleW=headerButtons(x+w,{{T("App location…","Путь приложения…"),"changePath:","folder",false,nullptr},
+  {T("Remove app…","Убрать приложение…"),"removeApp:","minus",false,nullptr}})-x-16;
+ pageHeader(x,w,T("APPLICATION","ПРИЛОЖЕНИЕ"),get(a,"name"),nullptr,titleW);
+ Obj path=labelObj(rootView,shortPath(get(a,"path")),rect(x,96,w,18),12,muted());send<void>(path,"setFont:",codeFont(12,0));send<void>(path,"setLineBreakMode:",(Int)5);
+ Obj ps=visibleProfiles();if(!count(ps))return;Obj p=at(ps,0);Int tag=profileIndex(p);bool active=running(p)!=nullptr;
+ Obj box=card(rootView,rect(x,138,w,280),16);appIcon(box,get(a,"path"),rect(20,20,40,40));
+ labelObj(box,get(a,"name"),rect(76,20,w-96,20),16,ink(),.3);
+ Obj dot=statusDot(box,rect(76,49,7,7)),status=label(box,"",rect(89,44,w-109,18),12,muted());
+ panel(box,rect(20,78,w-40,1),hairline(),0);
+ Obj chosen=proxyFor(p);const char* proxyTitle=chosen?utf8(get(chosen,"name")):T("No proxy","Без прокси");
+ double bw=fitWidth(T("Copy address","Скопировать адрес"),false);if(bw<200)bw=200;
+ settingRow(box,88,w,"network",T("Proxy","Прокси"),str(active?T("Selection applies at the next launch","Выбор применится при следующем запуске"):T("Optional · uses the app’s proxy support","По желанию · зависит от поддержки в приложении")),proxyTitle,"appProxyMenu:",tag,bw,"chevron.up.chevron.down");
+ Obj local=proxyLocalAddress(p);
+ Obj copy=settingRow(box,144,w,"link",T("Local proxy address","Адрес локального прокси"),local?local:str(T("Available after launching with a proxy","Появится после запуска с прокси")),T("Copy address","Скопировать адрес"),"copyAppProxy:",tag,bw);
+ if(!local)disable(copy);
+ double by=228,right=w-20;
+ iconButton(box,"ellipsis","profileMore:",rect(right-32,by,32,32),tag,T("More actions","Другие действия"));right-=40;
+ if(active){iconButton(box,"xmark","stopProfile:",rect(right-32,by,32,32),tag,T("Close app","Закрыть приложение"),"danger");right-=40;
+  iconButton(box,"arrow.clockwise","restartProfile:",rect(right-32,by,32,32),tag,T("Restart app","Перезапустить приложение"));right-=40;}
+ styledButton(deckButtonClass,box,active?T("Show window","Показать окно"):T("Launch","Запустить"),"launchProfile:",rect(20,by,right-20,32),tag,"prominent",10,13,active?"macwindow":"play.fill");
+ Obj ref=dict();put(ref,"status",status);put(ref,"dot",dot);put(ref,"live",boolean(active));put(cardRefs,utf8(get(p,"id")),ref);
+ if(chosen||local)lines(rootView,T("Some apps need proxy setup in their own settings; routing is not verified.\nIn AnyDesk: Settings → Connection → HTTP-Proxy. Enter the local host and port above.\nThe address changes after each launch and works while this app is running.\nTo stop using a manually configured proxy, turn it off in the app’s settings too.","Некоторым приложениям нужна настройка прокси внутри самого приложения; маршрут не проверяется.\nВ AnyDesk: Настройки → Подключение → HTTP-прокси. Укажите локальный адрес и порт выше.\nАдрес меняется при каждом запуске и работает, пока запущено это приложение.\nЕсли настраивали прокси вручную, отключите его и в настройках приложения."),rect(x,438,w,100),12,muted(),20);
+ else lines(rootView,T("Launch the app with its usual settings and existing sign-in.\nChoose a proxy here if needed; some apps require setup in their own connection settings.\nIf you set up a proxy manually in the app, turn it off there to use a direct connection.","Приложение запускается с обычными настройками и текущим входом.\nПри необходимости выберите прокси; некоторым приложениям нужна настройка в их параметрах подключения.\nЕсли настраивали прокси внутри приложения вручную, отключите его там для прямого подключения."),rect(x,438,w,76),12,muted(),20);
+ footerNote(x,footY,w,"app",str(T("Existing app data · no separate profiles","Существующие данные приложения · без отдельных профилей")));
+}
 void buildUI(){
  if(!rootView||building)return;building=true;
  Obj old=send(send(rootView,"subviews"),"copy");for(UInt i=0;i<count(old);++i)send<void>(at(old,i),"removeFromSuperview");drop(old);send<void>(cardRefs,"removeAllObjects");footer=nullptr;usageFooter=nullptr;
@@ -735,13 +789,13 @@ void buildUI(){
   send<void>(l,"setShadowColor:",send(color(0,0,0,1),"CGColor"));send<void>(l,"setShadowOpacity:",(float).18);send<void>(l,"setShadowRadius:",12.0);send<void>(l,"setShadowOffset:",Extent{0,-8});
   panel(pane,rect(14,0,196,1),fill(.07),0);}
  kern(label(rootView,"AppDeck",rect(26,56,190,22),17,ink(),.4),-.17);label(rootView,T("One place. Many accounts.","Одно место. Разные аккаунты."),rect(26,78,190,14),11,faint(),0);
- const char* navTitles[]={T("Profiles","Профили"),T("Shared settings","Общие настройки"),T("Projects","Проекты"),T("Proxy","Прокси"),T("About","О приложении")};const char* navIcons[]={"person.2","slider.horizontal.3","folder","network","info.circle"};
+ const char* navTitles[]={isStandalone(currentApp())?T("Application","Приложение"):T("Profiles","Профили"),T("Shared settings","Общие настройки"),T("Projects","Проекты"),T("Proxy","Прокси"),T("About","О приложении")};const char* navIcons[]={"person.2","slider.horizontal.3","folder","network","info.circle"};
  for(Int i=0;i<5;++i){Obj b=navRow(rootView,rect(16,112+i*34,208,32),symbol(navIcons[i],13),true,str(navTitles[i]),"changePage:",i,page==i);if(page==i)send<void>(b,"setAccessibilitySelected:",true);}
  caption(rootView,T("APPS","ПРИЛОЖЕНИЯ"),rect(26,298,190,14));
  double listTop=318,listH=count(apps)*34.0,listMax=H-listTop-150;if(listMax<68)listMax=68;if(listH>listMax)listH=listMax;
  Obj sideList=scrollDocument(rootView,rect(16,listTop,208,listH),count(apps)*34.0);
  for(UInt i=0;i<count(apps);++i){Obj a=at(apps,i);Int n=0;for(UInt j=0;j<count(profiles);++j)if(same(get(at(profiles,j),"appId"),get(a,"id")))++n;
-  navRow(sideList,rect(0,i*34.0,208,32),send(workspace,"iconForFile:",get(a,"path")),false,get(a,"name"),"selectApp:",(Int)i,same(get(a,"id"),selected),formatInt("%ld",n));}
+  navRow(sideList,rect(0,i*34.0,208,32),send(workspace,"iconForFile:",get(a,"path")),false,get(a,"name"),"selectApp:",(Int)i,same(get(a,"id"),selected),isStandalone(a)?nullptr:formatInt("%ld",n));}
  navRow(rootView,rect(16,listTop+listH,208,32),symbol("plus.circle",13),true,str(T("Add app","Добавить приложение")),"chooseApp:",-1,false);
  {Obj sp=card(rootView,rect(16,H-82,208,36),10);imageView(sp,symbol("sidebar.right",13),rect(10,10,16,16),muted());
   const char* key="⌃⌥Space";double kw=(double)(Int)(textWidth(key,10.5,.3)+9);keycap(sp,key,rect(208-8-kw,8,kw,20),10.5);
@@ -750,12 +804,13 @@ void buildUI(){
   send<void>(edgeToggle,"setToolTip:",str(T("A slim panel at the right edge of the screen: quick launch and account switching","Узкая панель у правого края экрана: быстрый запуск и переключение аккаунтов")));}
  labelObj(rootView,cat(str("AppDeck "),str(VERSION)),rect(26,H-32,190,14),11,faint(),0);
  Obj a=currentApp();bool codexGroup=a&&deck::adapter(utf8(get(a,"adapter")))==deck::Adapter::Codex;
- if(page==0){
+ if(page==0&&isStandalone(a)){buildStandalonePage(x,w,footY,a);
+ }else if(page==0){
   Obj visible=visibleProfiles();double titleW=w;
   if(a)titleW=headerButtons(x+w,{{T("App location…","Путь приложения…"),"changePath:","folder",false,nullptr},
    {T("2×2 grid","Сетка 2×2"),"tileWindows:","square.grid.2x2",false,T("Arrange up to four running windows of this group. Requires Accessibility access.","Разложить до четырёх запущенных окон этой группы. Нужен Универсальный доступ.")},
    {T("Launch all","Запустить все"),"launchAll:","play",false,nullptr},{T("New profile","Новый профиль"),"newProfile:","plus",true,nullptr}})-x-16;
-  pageHeader(x,w,T("APP PROFILES","ПРОФИЛИ ПРИЛОЖЕНИЯ"),a?get(a,"name"):str(T("Your apps, side by side","Ваши приложения, рядом")),a?nullptr:str(T("Choose Codex (ChatGPT.app), Claude or another supported app and create profiles.","Выберите Codex (ChatGPT.app), Claude или другое поддерживаемое приложение и создайте профили.")),titleW);
+  pageHeader(x,w,T("APP PROFILES","ПРОФИЛИ ПРИЛОЖЕНИЯ"),a?get(a,"name"):str(T("Your apps, side by side","Ваши приложения, рядом")),a?nullptr:str(T("Add any installed app. Supported apps also offer separate account profiles.","Добавьте любое установленное приложение. Для поддерживаемых приложений доступны отдельные профили аккаунтов.")),titleW);
   if(a){const char* pre=T("Original","Оригинал");double pw=textWidth(pre,13,0);label(rootView,pre,rect(x,96,pw+8,18),13,muted(),0);label(rootView,"·",rect(x+pw+6,96,10,18),13,dim(),0);
    Obj path=labelObj(rootView,shortPath(get(a,"path")),rect(x+pw+18,97,w-pw-18,17),12,muted(),0);send<void>(path,"setFont:",codeFont(12,0));send<void>(path,"setLineBreakMode:",(Int)5);}
   if(count(visible)){
@@ -768,7 +823,7 @@ void buildUI(){
    Obj box=card(rootView,rect(x,138,w,260),16);
    if(a)appIcon(box,get(a,"path"),rect(32,32,64,64));else imageView(box,send(app,"applicationIconImage"),rect(32,32,64,64));
    kern(label(box,T("Many accounts. One workspace.","Несколько аккаунтов. Одна рабочая среда."),rect(32,112,w-64,26),20,ink(),.4),-.3);
-   label(box,a?T("This group has no profiles yet. Add the first one — you sign in inside the app itself.","В этой группе пока нет профилей. Добавьте первый — вход выполняется уже внутри приложения."):T("Choose Codex (ChatGPT.app), Claude or another supported app and create profiles.","Выберите Codex (ChatGPT.app), Claude или другое поддерживаемое приложение и создайте профили."),rect(32,146,w-64,18),13,muted(),0);
+   label(box,a?T("This group has no profiles yet. Add the first one — you sign in inside the app itself.","В этой группе пока нет профилей. Добавьте первый — вход выполняется уже внутри приложения."):T("Add any installed app. Supported apps also offer separate account profiles.","Добавьте любое установленное приложение. Для поддерживаемых приложений доступны отдельные профили аккаунтов."),rect(32,146,w-64,18),13,muted(),0);
    label(box,T("Every profile is an ordinary macOS window with its own sign-in. The original .app is neither copied nor modified.","Каждый профиль — обычное окно macOS со своим входом. Исходное .app не копируется и не изменяется."),rect(32,168,w-64,16),12,faint(),0);
    const char* next=a?T("Create profile","Создать профиль"):T("Choose app…","Выбрать приложение…");button(box,next,a?"newProfile:":"chooseApp:",rect(32,204,fitWidth(next,true),32),-1,true,"plus");
   }
@@ -872,7 +927,7 @@ void refresh(){
   Obj ref=get(cardRefs,utf8(get(p,"id")));
   if(ref){Obj status=get(ref,"status");bool failed=get(p,"lastError")!=nullptr;
    send<void>(status,"setStringValue:",restarting(p)?str(T("Restarting…","Перезапускается…")):active?str(truth(get(p,"syncPending"))?T("Running · updates pending","Запущен · есть обновления"):T("Running","Запущен")):failed?str(T("Failed to start","Не запустился")):str(T("Not running","Не запущен")));
-   if(Obj via=proxyShownName(p))send<void>(status,"setStringValue:",cat(cat(send(status,"stringValue"),str(T(" · via "," · через "))),via));
+   if(Obj via=proxyShownName(p))send<void>(status,"setStringValue:",cat(cat(send(status,"stringValue"),str(isStandalone(appFor(p))?T(" · proxy requested: "," · запрос прокси: "):T(" · via "," · через "))),via));
    send<void>(status,"setTextColor:",restarting(p)||failed?warnColor():muted());
    if(Obj dot=get(ref,"dot"))statusDotColor(dot,restarting(p)||failed?warnColor():active?liveColor():dim(),active,!active&&!restarting(p)&&!failed);send<void>(status,"setToolTip:",truth(get(p,"syncPending"))?str(T("The shared list and automations apply after this instance fully restarts.","Общий список и автоматизации применятся после полного перезапуска этого экземпляра.")):get(p,"lastError"));
    if(truth(get(ref,"live"))!=active)flagged=true; // the button row differs between the two states
@@ -893,7 +948,7 @@ void buildMenus(){
  menuItem(m,T("Show AppDeck","Показать AppDeck"),"showWindow:");menuItem(m,T("Side panel  ⌃⌥Space","Правая панель  ⌃⌥Space"),"toggleEdge:");menuItem(m,T("About","О приложении"),"changePage:",4);menuItem(m,T("User guide","Инструкция (EN)"),"showHelp:");separator(m);
  Obj quit=menuItem(m,T("Quit AppDeck","Завершить AppDeck"),"terminate:",-1,"q");send<void>(quit,"setTarget:",app);drop(m);
  top=menuItem(bar,T("File","Файл"),nullptr);m=make("NSMenu");send<void>(top,"setSubmenu:",m);
- menuItem(m,T("New Profile…","Новый профиль…"),"newProfile:",-1,"n");menuItem(m,T("Add App…","Добавить приложение…"),"chooseApp:");menuItem(m,T("Add Project…","Добавить проект…"),"addProject:");separator(m);menuItem(m,T("Diagnostics…","Диагностика…"),"diagnostics:");
+ if(!isStandalone(currentApp()))menuItem(m,T("New Profile…","Новый профиль…"),"newProfile:",-1,"n");menuItem(m,T("Add App…","Добавить приложение…"),"chooseApp:");menuItem(m,T("Add Project…","Добавить проект…"),"addProject:");separator(m);menuItem(m,T("Diagnostics…","Диагностика…"),"diagnostics:");
  Obj closeItem=menuItem(m,T("Close Window","Закрыть окно"),"performClose:",-1,"w");send<void>(closeItem,"setTarget:",window);drop(m);
  top=menuItem(bar,T("Edit","Правка"),nullptr);m=make("NSMenu");send<void>(top,"setSubmenu:",m);
  struct EditItem{const char* title;const char* action;const char* key;};
@@ -904,7 +959,7 @@ void buildMenus(){
  separator(m);menuItem(m,T("Launch all","Запустить все"),"launchAll:");menuItem(m,T("Arrange 2×2","Разложить 2×2"),"tileWindows:");menuItem(m,T("Restore Layout","Вернуть расположение"),"restoreWindows:");menuItem(m,T("Hide All Profiles","Скрыть все профили"),"hideProfiles:");drop(m);
  send<void>(app,"setMainMenu:",bar);drop(bar);
  if(statusItem){Obj status=make("NSMenu");send<void>(status,"setAutoenablesItems:",false);menuItem(status,T("Side panel  ⌃⌥Space","Правая панель  ⌃⌥Space"),"toggleEdge:");menuItem(status,T("Show AppDeck","Показать AppDeck"),"showWindow:");menuItem(status,T("Arrange 2×2","Разложить 2×2"),"tileWindows:");menuItem(status,T("Restore Layout","Вернуть расположение"),"restoreWindows:");menuItem(status,T("Hide Profiles","Скрыть профили"),"hideProfiles:");separator(status);
-  for(UInt i=0;i<count(profiles);++i){Obj p=at(profiles,i);Obj title=cat(cat(cat(running(p)?str("● "):str("○ "),get(appFor(p),"name")),str(" · ")),get(p,"name"));menuItem(status,utf8(title),"launchProfile:",profileIndex(p));}
+  for(UInt i=0;i<count(profiles);++i){Obj p=at(profiles,i);Obj title=cat(running(p)?str("● "):str("○ "),isStandalone(appFor(p))?get(p,"name"):cat(cat(get(appFor(p),"name"),str(" · ")),get(p,"name")));menuItem(status,utf8(title),"launchProfile:",profileIndex(p));}
   separator(status);menuItem(status,T("User guide","Инструкция (EN)"),"showHelp:");Obj q=menuItem(status,T("Quit AppDeck","Завершить AppDeck"),"terminate:");send<void>(q,"setTarget:",app);send<void>(statusItem,"setMenu:",status);drop(status);
  }
 }
@@ -992,6 +1047,7 @@ void registerClasses(){
  struct Action {const char* selector;void(*fn)(Obj,Sel,Obj);};
  Action actions[]={
  {"chooseApp:",chooseApplication},{"newProfile:",newProfileAction},{"selectApp:",selectAppAction},{"launchProfile:",launchAction},{"stopProfile:",stopAction},{"restartProfile:",restartAction},
+ {"appProxyMenu:",appProxyMenuAction},{"copyAppProxy:",copyAppProxyAction},
  {"renameProfile:",renameAction},{"duplicateProfile:",duplicateAction},{"profileMoveUp:",profileMoveUpAction},{"profileMoveDown:",profileMoveDownAction},{"profileFolder:",profileFolderAction},{"removeProfile:",removeProfileAction},{"profileMore:",moreAction},
  {"toggleShare:",shareAction},{"profileError:",profileErrorAction},{"changePage:",pageAction},{"showWindow:",showWindowAction},{"launchAll:",launchAllAction},{"changePath:",changePathAction},{"removeApp:",removeAppAction},
  {"openSharedFolder:",openSharedFolder},{"openSharedFile:",openSharedFile},{"importSettings:",importSettings},{"openData:",openDataAction},{"addProject:",addProjectAction},
