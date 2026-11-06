@@ -77,6 +77,7 @@ void usageStartClaude(Obj p,Obj binary,Obj scratch){
  // No identity or session state of any other Claude Code may leak into the meter.
  for(UInt i=0;i<count(keys);++i){const char* k=utf8(at(keys,i));if(deck::prefix(k,"CLAUDE_CODE_")||deck::prefix(k,"CLAUDECODE")||deck::prefix(k,"ANTHROPIC_")||deck::prefix(k,"CLAUDE_AGENT_SDK")||deck::equal(k,"CLAUDE_CONFIG_DIR"))send<void>(env,"removeObjectForKey:",at(keys,i));}
  drop(keys);put(env,"CLAUDE_CONFIG_DIR",canonical(meter));
+ for(const char* key:{"DISABLE_GROWTHBOOK","DO_NOT_TRACK","grpc_proxy","CLAUDE_CODE_HTTP_PROXY","CLAUDE_CODE_HTTPS_PROXY"})erase(env,key);
  // Narrow opt-outs only. CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC must NOT be set: Claude Code counts the
  // usage request itself as non-essential and answers get_usage with rate_limits:null (0.7.0 did exactly that).
  for(const char* off:{"DISABLE_AUTOUPDATER","DISABLE_ERROR_REPORTING","DISABLE_TELEMETRY"})put(env,off,str("1"));

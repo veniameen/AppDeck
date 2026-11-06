@@ -12,7 +12,7 @@
 #include "claude_session_policy.hpp"
 using namespace mac;
 namespace {
-constexpr const char* VERSION="0.13.0";
+constexpr const char* VERSION="0.14.0";
 void* appKit=nullptr;
 Obj app=nullptr,window=nullptr,controller=nullptr,rootView=nullptr;
 Obj state=nullptr,apps=nullptr,profiles=nullptr,projects=nullptr,selected=nullptr;
@@ -43,6 +43,8 @@ Obj proxyFor(Obj);Obj proxyServe(Obj,Obj*);void proxyApply(Obj,Obj,int);bool pro
 void proxyApplyEnv(Obj,int);
 bool launch(Obj,bool);
 void newClaudeProfileDialog(Obj,Obj,Int,Obj);
+void claudeProfileSettingsAction(Obj,Sel,Obj);void claudeWebAction(Obj,Sel,Obj);Obj claudeWebProfile(Obj);
+bool proxyEdit(Obj);Obj registerApplication(Obj,deck::Adapter,bool);
 Obj color(double r,double g,double b,double a=1){return send(cls("NSColor"),"colorWithSRGBRed:green:blue:alpha:",r,g,b,a);}
 // Design tokens ("Graphite glass"): warm bone ink on dark glass. Colour appears only for state (live,
 // warn, danger) and for the profile's identity badge; controls are neutral glass.
@@ -154,6 +156,10 @@ void load(){
   if(!get(p3,"color"))put(p3,"color",num(0));usageSanitize(p3);
   if(Obj mode=get(p3,"claudeClean")){double v=send<double>(isClass(mode,"NSNumber")?mode:(Obj)nullptr,"doubleValue");
    if(!isClass(mode,"NSNumber")||(v!=0&&v!=1)||(v==1&&(truth(get(p3,"master"))||deck::adapter(utf8(get(appFor(p3),"adapter")))!=deck::Adapter::Claude))){showError(str(T("Invalid Claude profile mode","Некорректный режим профиля Claude")),str(T("claudeClean must be a boolean on a separate Claude profile. Nothing was changed.","claudeClean должен быть логическим значением отдельного профиля Claude. Ничего не изменено.")));exit(2);}}
+  for(const char* key:{"claudeCodeIsolated","claudeReduceTraffic","proxyRequired","proxyHardened","claudeWeb"})if(Obj value=get(p3,key)){
+   if(!isClass(value,"NSNumber")||(send<double>(value,"doubleValue")!=0&&send<double>(value,"doubleValue")!=1)){showError(str(T("Invalid profile setting","Некорректная настройка профиля")),str(T("Profile switches must be booleans. Nothing was changed.","Переключатели профиля должны быть логическими значениями. Ничего не изменено.")));exit(2);}}
+  if(truth(get(p3,"claudeCodeIsolated"))&&(!truth(get(p3,"claudeClean"))||truth(get(p3,"master"))||deck::adapter(utf8(get(appFor(p3),"adapter")))!=deck::Adapter::Claude)){showError(str(T("Invalid Claude isolation mode","Некорректный режим изоляции Claude")),str(T("Only a separate clean Claude profile can have private Code storage.","Отдельное хранилище Code доступно только чистому отдельному профилю Claude.")));exit(2);}
+  if(get(p3,"claudeWebProfile")&&(!isClass(get(p3,"claudeWebProfile"),"NSString")||!deck::uuid(utf8(get(p3,"claudeWebProfile"))))){showError(str(T("Invalid browser profile","Некорректный профиль браузера")),str(T("The linked browser profile ID is invalid.","Некорректный ID связанного профиля браузера.")));exit(2);}
  }
  for(UInt i=0;i<count(projects);++i){Obj p4=at(projects,i);if(!isClass(p4,"NSDictionary")||!isClass(get(p4,"path"),"NSString")||!isClass(get(p4,"name"),"NSString")){showError(str(T("Invalid project folder","Некорректная папка проекта")),str(T("Check state.plist.","Проверьте state.plist.")));exit(2);}}
  // Up to 0.8 the dock grouped profiles by app. Adopt that order once, so nothing moves on upgrade;
@@ -247,6 +253,7 @@ bool launch(Obj p,bool activate=true){
  if(Obj r=running(p)){syncGroup(appFor(p),false);if(activate)focus(r);return true;}
  // A copy that AppDeck lost track of still owns its user-data folder: adopt it, never start a twin.
  if(Obj r=ownedProcess(p)){if(adopt(p,r)){save();refresh();if(activate)focus(r);return true;}}
+ if(proxyBlocked(p))return false;
  Obj a=appFor(p),path=get(a,"path");
  if(!a||!exists(join(path,"Contents/Info.plist"))){showError(str(T("App not found","Приложение не найдено")),str(T("The path has changed. Choose the new .app with “App location…”.","Путь изменился. Выберите новый .app через кнопку «Путь приложения».")));return false;}
  if(isMaster(p)){if(Obj failure=syncGroup(a,true)){showError(str(T("Sync before launch","Синхронизация перед запуском")),failure);return false;}
@@ -265,12 +272,17 @@ bool launch(Obj p,bool activate=true){
   if(sharesHistory(p)){put(env,"CODEX_SQLITE_HOME",canonical(baseSource(a)));put(p,"historyMode",str("shared"));}else erase(p,"historyMode");}
  if(adapter==deck::Adapter::Claude)applyClaudeEnvironment(p,env);
  if(adapter==deck::Adapter::VSCode){add(args,str("--new-window"));add(args,cat(str("--extensions-dir="),join(base,"extensions")));}
- if(proxyBlocked(p))return false; // its proxy is named in settings AppDeck could not read: never start it without one
+ if(truth(get(p,"claudeWeb"))&&adapter==deck::Adapter::Chromium){add(args,str("--no-first-run"));add(args,str("--no-default-browser-check"));add(args,str("https://claude.ai/"));}
  Obj config=dict();Obj ek=publicConstant(appKit,"NSWorkspaceLaunchConfigurationEnvironment");Obj ak=publicConstant(appKit,"NSWorkspaceLaunchConfigurationArguments");
  if(!ek||!ak){showError(str(T("macOS API unavailable","API macOS недоступен")),str(T("System launch constants not found. Please send diagnostics for this macOS version.","Не найдены системные константы запуска. Отправьте диагностику этой версии macOS.")));return false;}
  // Behind a proxy: a private loopback bridge for this window (it adds the credentials Chromium cannot send).
  Obj proxy=proxyFor(p),bridge=nullptr;
- if(proxy){Obj why=nullptr;bridge=proxyServe(proxy,&why);if(!bridge){proxyUnavailable(proxy,why);return false;}proxyApply(env,args,(int)integer(get(bridge,"port")));}
+ if(proxy){Obj why=nullptr;bridge=proxyServe(proxy,&why);if(!bridge){proxyUnavailable(proxy,why);return false;}int port=(int)integer(get(bridge,"port"));proxyApply(env,args,port);
+  // Claude Desktop 4.4212.0 refuses host-resolver-rules at startup. Keep its vendor guard intact;
+  // this optional Chromium resolver policy belongs to the separate browser profile only.
+  if(adapter==deck::Adapter::Chromium&&truth(get(p,"proxyHardened")))add(args,str(deck::proxyResolverArgument));
+  if(adapter==deck::Adapter::Claude){for(const char* key:{"CLAUDE_CODE_HTTP_PROXY","CLAUDE_CODE_HTTPS_PROXY","grpc_proxy"})put(env,key,proxyURL(port));put(env,"CLAUDE_CODE_PROXY_RESOLVES_HOSTS",str("1"));}}
+ if(adapter==deck::Adapter::Claude){if(Obj why=claudeConfigureSettings(p,env)){proxyAbandon(bridge);showError(str(T("Claude Code settings were not saved","Настройки Claude Code не сохранены")),why);return false;}}
  send<void>(config,"setObject:forKey:",env,ek);send<void>(config,"setObject:forKey:",args,ak);
  Obj alreadyRunning=array();
  Obj allRunning=send(workspace,"runningApplications");
@@ -292,8 +304,8 @@ bool launch(Obj p,bool activate=true){
   proxyAbandon(bridge);showError(str(T("The app merged the instances","Приложение объединило экземпляры")),str(T("The adapter could not create a separate process. Do not change the account in this window: it belongs to another profile. This app version is not compatible.","Адаптер не смог создать отдельный процесс. Не меняйте аккаунт в этом окне: оно принадлежит другому профилю. Эта версия приложения несовместима.")));return false;}}
  double started=processStarted(r);if(started<=0){proxyAbandon(bridge);showError(str(T("Could not confirm the process","Не удалось подтвердить процесс")),str(T("The app started, but macOS did not return its launch time. Check the window manually.","Приложение запущено, но macOS не вернула время запуска. Проверьте окно вручную.")));return false;}
  // The bridge serves this very process from now on (it keeps running if AppDeck quits).
- if(bridge){if(!proxyWatch(bridge,pid))showError(str(T("The proxy bridge stopped","Мост прокси остановился")),str(T("The window was started through a bridge that is no longer running, so its connections will fail. Restart the profile.","Окно запущено через мост, который уже не работает, поэтому его соединения не пройдут. Перезапустите профиль.")));put(p,"proxyUsed",get(proxy,"name"));}
- else erase(p,"proxyUsed");
+ if(bridge){if(!proxyWatch(bridge,pid)){send<bool>(r,"terminate");erase(p,"proxyUsed");erase(p,"proxyPort");showError(str(T("The proxy bridge stopped","Мост прокси остановился")),str(T("The proxy did not stay active. The new process was asked to quit; restart the profile after checking its proxy.","Прокси не остался активным. Новому процессу отправлено завершение; проверьте прокси и запустите профиль снова.")));return false;}put(p,"proxyUsed",get(proxy,"name"));put(p,"proxyPort",get(bridge,"port"));}
+ else{erase(p,"proxyUsed");erase(p,"proxyPort");}
  put(p,"pid",num(pid));put(p,"started",real(started));erase(p,"lastError");
  put(p,"launchCheck",real(send<double>(send(cls("NSDate"),"date"),"timeIntervalSince1970")+8));
  note(sharesHistory(p)?"Profile launched with the shared thread database; credentials are not inspected.":"Profile launched; credentials are not inspected.");save();refresh();return true;
@@ -392,6 +404,7 @@ void separator(Obj menu){send<void>(menu,"addItem:",send(cls("NSMenuItem"),"sepa
 void moreAction(Obj,Sel,Obj sender){Obj p=fromSender(sender);if(!p)return;Int tag=profileIndex(p);Obj m=make("NSMenu");send<void>(m,"setAutoenablesItems:",false);
  bool standalone=isStandalone(appFor(p));
  if(!standalone){menuItem(m,T("Rename…","Переименовать…"),"renameProfile:",tag);menuItem(m,T("Duplicate without account…","Дублировать без аккаунта…"),"duplicateProfile:",tag);separator(m);}
+ if(claudeGroup(appFor(p))&&!isMaster(p)){menuItem(m,T("Claude profile settings…","Настройки профиля Claude…"),"claudeProfileSettings:",tag);menuItem(m,T("Open Claude in private Chrome…","Открыть Claude в отдельном Chrome…"),"claudeWeb:",tag);separator(m);}
  // The order is shared with the side panel and ⌃⌥1…8; here it moves among this app's cards.
  {Obj ps=visibleProfiles();UInt place=send<UInt>(ps,"indexOfObjectIdenticalTo:",p);
   send<void>(menuItem(m,T("Move up","Переместить выше"),"profileMoveUp:",tag),"setEnabled:",place>0&&place<count(ps));send<void>(menuItem(m,T("Move down","Переместить ниже"),"profileMoveDown:",tag),"setEnabled:",place+1<count(ps));separator(m);}
@@ -518,29 +531,91 @@ Obj popup(Obj parent,Rect f,const char* const* choices,UInt n,Int selectedIndex)
  Obj p=send(send(cls("NSPopUpButton"),"alloc"),"initWithFrame:pullsDown:",f,false);
  for(UInt i=0;i<n;++i)send<void>(p,"addItemWithTitle:",str(choices[i]));send<void>(p,"selectItemAtIndex:",selectedIndex);send<void>(parent,"addSubview:",p);drop(p);return p;
 }
-Obj claudeProfileForm(Obj initial,Obj* nameField,Obj* modeField){
- Obj view=send(send((Obj)deckViewClass,"alloc"),"initWithFrame:",rect(0,0,500,250));
- label(view,T("Profile name","Имя профиля"),rect(0,4,122,22),13,ink());
- Obj field=send(send(cls("NSTextField"),"alloc"),"initWithFrame:",rect(130,0,370,26));send<void>(field,"setStringValue:",initial);send<void>(view,"addSubview:",field);drop(field);
- label(view,T("Environment","Среда"),rect(0,44,122,22),13,ink());
- const char* modes[]={T("Clean Desktop profile · no shared sessions","Чистый Desktop · без общих сессий"),T("Profile with shared Code sessions","Профиль с общими сессиями Code")};
- Obj mode=popup(view,rect(130,38,370,28),modes,2,0);
- label(view,T("Clean profile starts with empty Claude Desktop data and no shared sessions. Sign in again, even while another copy is running.","Чистый профиль начинает с пустых данных Claude Desktop без общих сессий. Войдите заново, даже если другая копия уже работает."),rect(0,82,500,52),12,muted());
- label(view,T("The other mode also starts with a separate Desktop sign-in, and can use selected local conversations when the session bridge is enabled.","Второй режим также создаёт отдельный вход Desktop и позволяет использовать выбранные локальные переписки при включённом обмене сессиями."),rect(0,142,500,52),12,muted());
- label(view,T("Global Claude Code settings and macOS permissions remain shared in both modes.","Глобальные настройки Claude Code и разрешения macOS остаются общими в обоих режимах."),rect(0,208,500,38),12,faint());
+Obj claudeFormFields=nullptr;
+void claudeProxyChoices(Obj selector,Obj choice=nullptr){
+ send<void>(selector,"removeAllItems");
+ auto option=[&](Obj title,Obj value){send<void>(selector,"addItemWithTitle:",title);send<void>(send(selector,"lastItem"),"setRepresentedObject:",value);};
+ option(str(T("Direct connection","Прямое подключение")),str("none"));
+ option(str(T("AppDeck default proxy","Прокси AppDeck по умолчанию")),str("default"));
+ for(UInt i=0;i<count(proxies);++i)option(get(at(proxies,i),"name"),get(at(proxies,i),"id"));
+ if(!choice)choice=proxyDefault()?str("default"):count(proxies)==1?get(at(proxies,0),"id"):str("none");
+ bool found=false;Obj items=send(selector,"itemArray");for(UInt i=0;i<count(items);++i)if(same(send(at(items,i),"representedObject"),choice)){send<void>(selector,"selectItemAtIndex:",(Int)i);found=true;break;}
+ if(!found){option(str(T("Previously selected proxy is unavailable","Выбранный ранее прокси недоступен")),choice);send<void>(selector,"selectItemAtIndex:",(Int)send<Int>(selector,"numberOfItems")-1);}
+}
+void claudeProxyChangedAction(Obj,Sel,Obj sender){
+ if(!claudeFormFields)return;Obj choice=send(send(sender,"selectedItem"),"representedObject");bool on=!same(choice,str("none"));
+ send<void>(get(claudeFormFields,"required"),"setState:",(Int)(on?1:0));send<void>(get(claudeFormFields,"dns"),"setState:",(Int)(on?1:0));
+}
+void claudeAddProxyAction(Obj,Sel,Obj){
+ if(!claudeFormFields||!proxyEdit(nullptr))return;Obj selector=get(claudeFormFields,"proxy");claudeProxyChoices(selector,count(proxies)?get(at(proxies,count(proxies)-1),"id"):str("none"));claudeProxyChangedAction(nullptr,nullptr,selector);
+}
+void claudeNetworkHelpAction(Obj,Sel,Obj);
+Obj claudeProfileForm(Obj initial,Obj* nameField,Obj* modeField,Obj fields=nullptr,Obj existing=nullptr){
+ Obj view=send(send((Obj)deckViewClass,"alloc"),"initWithFrame:",rect(0,0,520,414));if(!fields)fields=dict();
+ label(view,T("Profile name","Имя профиля"),rect(0,4,120,22),13,ink());
+ Obj field=send(send(cls("NSTextField"),"alloc"),"initWithFrame:",rect(130,0,390,26));send<void>(field,"setStringValue:",initial);send<void>(view,"addSubview:",field);drop(field);
+ label(view,T("Environment","Среда"),rect(0,44,120,22),13,ink());
+ const char* modes[]={T("Clean Claude Desktop + Code","Чистый Claude Desktop + Code"),T("Shared Code settings and sessions","Общие настройки и сессии Code"),T("Desktop-only isolation (older profile)","Изоляция Desktop (старый профиль)")};
+ Int selectedMode=existing?(claudeCodeIsolated(existing)?0:claudeCleanProfile(existing)?2:1):0;
+ Obj mode=popup(view,rect(130,38,390,28),modes,existing?3:2,selectedMode);if(existing)send<void>(mode,"setEnabled:",false);
+ label(view,T("Clean mode has separate sign-in, Code settings, plugins and local history. Existing profiles are preserved. macOS and project rules still apply.","Чистый режим: отдельный вход, настройки, плагины и локальная история Code. Старые профили сохраняются. Правила macOS и проектов действуют."),rect(0,78,520,52),12,muted());
+ label(view,T("Proxy","Прокси"),rect(0,145,120,22),13,ink());
+ Obj proxy=send(send(cls("NSPopUpButton"),"alloc"),"initWithFrame:pullsDown:",rect(130,138,264,28),false);send<void>(view,"addSubview:",proxy);drop(proxy);
+ claudeProxyChoices(proxy,existing?(get(existing,"proxy")?get(existing,"proxy"):str("default")):nullptr);send<void>(proxy,"setTarget:",controller);send<void>(proxy,"setAction:",sel("claudeProxyChanged:"));
+ button(view,T("Add…","Добавить…"),"claudeAddProxy:",rect(402,138,118,28));
+ Obj choice=send(send(proxy,"selectedItem"),"representedObject");bool selectedProxy=!same(choice,str("none"));
+ Obj required=checkbox(view,T("Require proxy · never substitute a direct launch","Обязательный прокси · не запускать напрямую"),rect(0,180,520,22),existing?truth(get(existing,"proxyRequired")):selectedProxy);
+ Obj dns=checkbox(view,T("Block DNS bypass in linked Chrome (with proxy)","Блокировать обход DNS в связанном Chrome (с прокси)"),rect(0,208,520,22),existing?truth(get(existing,"proxyHardened")):selectedProxy);
+ Obj traffic=checkbox(view,T("Disable optional Code traffic and error reports","Отключить необязательный трафик Code и отчёты об ошибках"),rect(0,236,520,22),existing?truth(get(existing,"claudeReduceTraffic")):true);
+ send<void>(traffic,"setToolTip:",str(T("Also disables Code auto-updates, feature experiments and Remote Control. Account-limit checks keep their separate safe configuration.","Также отключает автообновления Code, эксперименты и Remote Control. Проверки лимитов используют отдельные безопасные настройки.")));
+ Obj linkedWeb=claudeWebProfile(existing);
+ Obj web=checkbox(view,T("Also create a separate Chrome profile for claude.ai","Также создать отдельный профиль Chrome для claude.ai"),rect(0,264,520,22),linkedWeb!=nullptr);
+ if(linkedWeb)send<void>(web,"setEnabled:",false);
+ label(view,T("Proxy settings are not a system firewall. To block every direct TCP/UDP connection, configure OS or network egress rules. hosts alone is insufficient.","Настройки прокси — не системный firewall. Для запрета всех прямых TCP/UDP-соединений нужны правила ОС или сети. Одного hosts недостаточно."),rect(0,302,520,52),12,faint());
+ button(view,T("Network setup guide","Настройка сети"),"claudeNetworkHelp:",rect(0,376,220,28));
+ for(auto entry:{"required","dns","traffic","web","proxy"}){Obj value=!strcmp(entry,"required")?required:!strcmp(entry,"dns")?dns:!strcmp(entry,"traffic")?traffic:!strcmp(entry,"web")?web:proxy;put(fields,entry,value);}
  *nameField=field;*modeField=mode;return view;
 }
-void newClaudeProfileDialog(Obj a,Obj initial,Int colorIndex,Obj after){
- if(previewMode)return;frontForModal();Obj alert=make("NSAlert");send<void>(alert,"setMessageText:",str(T("New Claude profile","Новый профиль Claude")));
- send<void>(alert,"setInformativeText:",str(T("Choose how this profile stores its local data. Sign in inside its window after launch.","Выберите, как профиль хранит локальные данные. Вход выполняется в его окне после запуска.")));
- Obj nameField=nullptr,modeField=nullptr,view=claudeProfileForm(initial,&nameField,&modeField);send<void>(alert,"setAccessoryView:",view);
- send(alert,"addButtonWithTitle:",str(T("Create profile","Создать профиль")));send(alert,"addButtonWithTitle:",str(T("Cancel","Отмена")));send<void>(send(alert,"window"),"setInitialFirstResponder:",nameField);
- if(send<Int>(alert,"runModal")==1000){Obj name=send(send(nameField,"stringValue"),"stringByTrimmingCharactersInSet:",send(cls("NSCharacterSet"),"whitespaceAndNewlineCharacterSet"));
-  if(!send<UInt>(name,"length")||send<UInt>(name,"length")>64)showError(str(T("Profile not created","Профиль не создан")),str(T("Enter 1 to 64 characters.","Введите от 1 до 64 символов.")));
-  else{Obj p=newProfile(a,name,colorIndex,false,after);put(p,"claudeClean",boolean(send<Int>(modeField,"indexOfSelectedItem")==0));page=0;save();buildUI();buildMenus();}
- }
- drop(view);drop(alert);
+Obj claudeWebProfile(Obj p){Obj id=get(p,"claudeWebProfile");for(UInt i=0;i<count(profiles);++i){Obj w=at(profiles,i);if(id&&same(get(w,"id"),id)&&truth(get(w,"claudeWeb"))&&!isMaster(w)&&deck::adapter(utf8(get(appFor(w),"adapter")))==deck::Adapter::Chromium)return w;}return nullptr;}
+Obj claudeChromePath(){
+ for(UInt i=0;i<count(apps);++i){Obj a=at(apps,i);if(deck::adapter(utf8(get(a,"adapter")))==deck::Adapter::Chromium&&deck::prefix(utf8(get(a,"bundleId")),"com.google.Chrome")&&exists(get(a,"path")))return get(a,"path");}
+ for(Obj path:{str("/Applications/Google Chrome.app"),join(home,"Applications/Google Chrome.app")})if(exists(join(path,"Contents/Info.plist")))return path;return nullptr;
 }
+void claudeCopyWebNetwork(Obj p,Obj w){for(const char* key:{"proxy","proxyRequired","proxyHardened"}){if(Obj v=get(p,key))put(w,key,v);else erase(w,key);}}
+bool claudeEnsureWeb(Obj p){
+ if(Obj w=claudeWebProfile(p)){claudeCopyWebNetwork(p,w);return true;}
+ Obj path=claudeChromePath();if(!path){showError(str(T("Google Chrome was not found","Google Chrome не найден")),str(T("Install Chrome in Applications, or add your Chrome app to AppDeck first. No browser data was copied.","Установите Chrome в «Программы» или сначала добавьте свой Chrome в AppDeck. Данные браузера не копировались.")));return false;}
+ Obj a=registerApplication(path,deck::Adapter::Chromium,false);if(!a||deck::adapter(utf8(get(a,"adapter")))!=deck::Adapter::Chromium){showError(str(T("Chrome profiles are unavailable","Профили Chrome недоступны")),str(T("The selected Chrome app must use the Chromium adapter, not ordinary launch.","Для выбранного Chrome нужен адаптер Chromium, а не обычный запуск.")));return false;}
+ Obj w=newProfile(a,cat(get(p,"name"),str(" · Claude Web")),integer(get(p,"color")),false);put(w,"claudeWeb",boolean(true));claudeCopyWebNetwork(p,w);put(p,"claudeWebProfile",get(w,"id"));return true;
+}
+void showClaudeProfileDialog(Obj a,Obj initial,Int colorIndex,Obj after,Obj existing=nullptr){
+ if(previewMode)return;if(existing&&(running(existing)||ownedProcess(existing)||(claudeWebProfile(existing)&&(running(claudeWebProfile(existing))||ownedProcess(claudeWebProfile(existing)))))){showError(str(T("Close the profile windows first","Сначала закройте окна профиля")),str(T("Close this Claude profile and its linked Chrome profile before changing network settings.","Перед изменением сети закройте этот профиль Claude и связанный профиль Chrome.")));return;}
+ frontForModal();Obj alert=make("NSAlert");send<void>(alert,"setMessageText:",str(existing?T("Claude profile settings","Настройки профиля Claude"):T("New Claude profile","Новый профиль Claude")));
+ send<void>(alert,"setInformativeText:",str(T("Choose local data and connection settings. Sign in inside the new window.","Выберите локальные данные и параметры подключения. Вход выполняется в новом окне.")));
+ Obj fields=dict(),nameField=nullptr,modeField=nullptr,view=claudeProfileForm(initial,&nameField,&modeField,fields,existing);send<void>(alert,"setAccessoryView:",view);claudeFormFields=keep(fields);
+ send(alert,"addButtonWithTitle:",str(existing?T("Save","Сохранить"):T("Create profile","Создать профиль")));send(alert,"addButtonWithTitle:",str(T("Cancel","Отмена")));send<void>(send(alert,"window"),"setInitialFirstResponder:",nameField);
+ for(;;){if(send<Int>(alert,"runModal")!=1000)break;
+  Obj name=send(send(nameField,"stringValue"),"stringByTrimmingCharactersInSet:",send(cls("NSCharacterSet"),"whitespaceAndNewlineCharacterSet")),choice=send(send(get(fields,"proxy"),"selectedItem"),"representedObject");
+  if(!send<UInt>(name,"length")||send<UInt>(name,"length")>64){showError(str(T("Profile not saved","Профиль не сохранён")),str(T("Enter 1 to 64 characters.","Введите от 1 до 64 символов.")));continue;}
+  bool required=send<Int>(get(fields,"required"),"state")==1,wantWeb=send<Int>(get(fields,"web"),"state")==1;
+  Obj chosenProxy=same(choice,str("default"))?proxyDefault():proxyById(choice);
+  if(required&&!chosenProxy){showError(str(T("Choose a proxy first","Сначала выберите прокси")),str(T("Add or select a saved proxy, or turn off the required-proxy option.","Добавьте или выберите сохранённый прокси либо отключите обязательное использование прокси.")));continue;}
+  if(wantWeb&&!claudeWebProfile(existing)&&!claudeChromePath()){showError(str(T("Google Chrome was not found","Google Chrome не найден")),str(T("Install Chrome or turn off the separate-browser option.","Установите Chrome или отключите создание отдельного браузера.")));continue;}
+  // Browser setup can fail. Stage edits so cancelling the dialog cannot mutate an existing profile.
+  Obj p=existing?autoRelease(send(existing,"mutableCopy")):newProfile(a,name,colorIndex,false,after);put(p,"name",name);
+  if(!existing){bool clean=send<Int>(modeField,"indexOfSelectedItem")==0;put(p,"claudeClean",boolean(clean));put(p,"claudeCodeIsolated",boolean(clean));}
+  put(p,"proxy",choice);put(p,"proxyRequired",boolean(required));put(p,"proxyHardened",boolean(send<Int>(get(fields,"dns"),"state")==1));put(p,"claudeReduceTraffic",boolean(send<Int>(get(fields,"traffic"),"state")==1));
+  if(wantWeb&&!claudeEnsureWeb(p)){if(!existing)send<void>(profiles,"removeObjectIdenticalTo:",p);continue;}
+  if(!wantWeb&&!claudeWebProfile(p))erase(p,"claudeWebProfile");
+  if(existing)for(const char* key:{"name","proxy","proxyRequired","proxyHardened","claudeReduceTraffic","claudeWebProfile"}){if(Obj value=get(p,key))put(existing,key,value);else erase(existing,key);}
+  page=0;save();buildUI();buildMenus();break;
+ }
+ drop(claudeFormFields);claudeFormFields=nullptr;drop(view);drop(alert);
+}
+void newClaudeProfileDialog(Obj a,Obj initial,Int colorIndex,Obj after){showClaudeProfileDialog(a,initial,colorIndex,after);}
+void claudeProfileSettingsAction(Obj,Sel,Obj sender){Obj p=fromSender(sender);if(p&&claudeGroup(appFor(p))&&!isMaster(p))showClaudeProfileDialog(appFor(p),get(p,"name"),integer(get(p,"color")),nullptr,p);}
+void claudeWebAction(Obj,Sel,Obj sender){Obj p=fromSender(sender);if(!p||!claudeGroup(appFor(p)))return;Obj w=claudeWebProfile(p);
+ if(w&&running(w)){launch(w);return;}if(!claudeEnsureWeb(p))return;save();buildUI();buildMenus();launch(claudeWebProfile(p));}
 Obj registerApplication(Obj path,deck::Adapter adapter,bool primary){
  if(adapter==deck::Adapter::Unsupported||!deck::suffix(utf8(path),".app")||!exists(join(path,"Contents/Info.plist")))return nullptr;
  for(UInt i=0;i<count(apps);++i)if(same(canonical(get(at(apps,i),"path")),canonical(path)))return at(apps,i);
@@ -644,6 +719,9 @@ void projectAction(Obj,Sel,Obj sender){Int tag=send<Int>(sender,"tag");Int index
 void helpAction(Obj,Sel,Obj){
  Obj path=send(send(cls("NSBundle"),"mainBundle"),"pathForResource:ofType:",str("Help"),str("html"));if(path)send<bool>(workspace,"openURL:",url(path));
 }
+void claudeNetworkHelpAction(Obj,Sel,Obj){
+ Obj path=send(send(cls("NSBundle"),"mainBundle"),"pathForResource:ofType:",str("ClaudeNetwork"),str("html"));if(path)send<bool>(workspace,"openURL:",url(path));else helpAction(nullptr,nullptr,nullptr);
+}
 void diagnosticsAction(Obj,Sel,Obj){
  Obj lines=array();add(lines,cat(str("AppDeck "),str(VERSION)));
  add(lines,str("Build: local clang against the system AppKit."));
@@ -744,7 +822,7 @@ void makeCard(Obj parent,Obj p,Rect frame,Int ordinal){
  Obj accountLabel=cardFact(c,T("ACCOUNT","АККАУНТ"),accountText,20,half);
  if(codex){cardFact(c,T("SETTINGS","НАСТРОЙКИ"),master?T("Original","Оригинал"):truth(get(p,"share"))?T("From base","Из базы"):T("Local","Локальные"),x2,sub);
   cardFact(c,T("HISTORY","ИСТОРИЯ"),master?T("Original","Оригинал"):sharesHistory(p)?T("Shared","Общая"):T("Own","Своя"),x2+sub+16,sub);}
- else if(claudeGroup(a)){cardFact(c,T("MODE","РЕЖИМ"),master?T("Original","Оригинал"):claudeCleanProfile(p)?T("Clean","Чистый"):T("Standard","Обычный"),x2,sub);cardFact(c,T("BRIDGE","ОБМЕН"),claudeCleanProfile(p)?T("Excluded","Выключен"):truth(get(a,"claudeSessionBridge"))?T("On","Включён"):T("Off","Выключен"),x2+sub+16,sub);}
+ else if(claudeGroup(a)){cardFact(c,T("MODE","РЕЖИМ"),master?T("Original","Оригинал"):claudeCodeIsolated(p)?T("Clean","Чистый"):claudeCleanProfile(p)?T("Desktop","Desktop"):T("Standard","Обычный"),x2,sub);cardFact(c,T("CODE","CODE"),claudeCodeIsolated(p)?T("Private","Свой"):T("Shared","Общий"),x2+sub+16,sub);}
  else{cardFact(c,T("DATA","ДАННЫЕ"),master?T("Original","Оригинал"):T("Own folder","Своя папка"),x2,sub);cardFact(c,T("ADAPTER","АДАПТЕР"),adapterTitle(a),x2+sub+16,sub);}
  send<void>(accountLabel,"setLineBreakMode:",(Int)5);if(limits)put(ref,"account",accountLabel);
  if(limits)put(ref,"usage",usageStrip(c,20,148,inner,profileIndex(p)));
@@ -892,7 +970,7 @@ void buildUI(){
    caption(rootView,T("LOCAL CODE SESSIONS","ЛОКАЛЬНЫЕ СЕССИИ CODE"),rect(x,368,w,14));
    Obj bridge=card(rootView,rect(x,390,w,settingRowH),16);bool bridgeOn=truth(get(a,"claudeSessionBridge"));
    settingRow(bridge,0,w,"bubble.left.and.bubble.right",T("Session bridge","Общие сессии"),str(bridgeOn?T("On · choose an account from Code sessions","Включено · выбирайте аккаунт в сессиях Code"):T("Off · each Desktop list stays independent","Выключено · списки Desktop раздельные")),bridgeOn?T("Turn off","Отключить"):T("Turn on…","Включить…"),"claudeBridgeToggle:",-1,bw);
-   lines(rootView,T("Clean Desktop profiles never join the session bridge. Global Claude Code settings remain shared. Choose the mode when creating a new profile.","Чистые профили Desktop не участвуют в обмене сессиями. Глобальные настройки Claude Code остаются общими. Режим выбирается при создании профиля."),rect(x,462,w,48),12,muted(),18);
+   lines(rootView,T("New clean profiles have private Code settings and history and never join the session bridge. Existing profiles keep their original mode.","Новые чистые профили имеют отдельные настройки и историю Code и не участвуют в обмене сессиями. Старые профили сохраняют свой режим."),rect(x,462,w,48),12,muted(),18);
    footerNote(x,footY,w,"lock.shield",str(T("Each account’s sign-in and data stay separate.","Вход и данные каждого аккаунта остаются раздельными.")));}
   else if(!codexSettings){pageHeader(x,w,eyebrow,title,nullptr);
    Obj box=card(rootView,rect(x,138,w,72),16);iconTile(box,rect(16,20,32,32),"hand.point.left");
@@ -1103,7 +1181,7 @@ void registerClasses(){
  {"toggleShare:",shareAction},{"profileError:",profileErrorAction},{"changePage:",pageAction},{"showWindow:",showWindowAction},{"launchAll:",launchAllAction},{"changePath:",changePathAction},{"removeApp:",removeAppAction},
  {"openSharedFolder:",openSharedFolder},{"openSharedFile:",openSharedFile},{"importSettings:",importSettings},{"openData:",openDataAction},{"addProject:",addProjectAction},
  {"projectAction:",projectAction},{"showHelp:",helpAction},{"diagnostics:",diagnosticsAction},{"tileWindows:",tileAction},{"timerTick:",tick},
- {"claudeBridgeToggle:",claudeBridgeToggleAction},{"claudeSessionsRefresh:",claudeSessionsRefreshAction},{"claudeSessionMenu:",claudeSessionMenuAction},{"claudeSessionOpen:",claudeSessionOpenAction},
+ {"claudeProfileSettings:",claudeProfileSettingsAction},{"claudeWeb:",claudeWebAction},{"claudeProxyChanged:",claudeProxyChangedAction},{"claudeAddProxy:",claudeAddProxyAction},{"claudeNetworkHelp:",claudeNetworkHelpAction},{"claudeBridgeToggle:",claudeBridgeToggleAction},{"claudeSessionsRefresh:",claudeSessionsRefreshAction},{"claudeSessionMenu:",claudeSessionMenuAction},{"claudeSessionOpen:",claudeSessionOpenAction},
  {"toggleEdge:",toggleEdgeAction},{"edgeFocus:",edgeFocusAction},
  {"proxyAdd:",proxyAddAction},{"proxyEdit:",proxyEditAction},{"proxyRemove:",proxyRemoveAction},{"proxyCheck:",proxyCheckAction},{"proxyCheckWorker:",proxyCheckWorker},{"proxyCheckFinished:",proxyCheckFinished},
  {"proxyDefaultMenu:",proxyDefaultMenuAction},{"proxyDefaultPick:",proxyDefaultPickAction},{"profileProxy:",profileProxyAction},

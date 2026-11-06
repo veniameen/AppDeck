@@ -14,6 +14,7 @@ scripts/build.sh
 scripts/test.sh
 bash scripts/test-claude-sessions.sh
 bash scripts/test-claude-profiles.sh
+bash scripts/test-claude-network.sh
 
 # The binary imports only system libraries and carries a complete ad-hoc signature (both slices).
 python3 tools/verify_bundle.py "$APP"

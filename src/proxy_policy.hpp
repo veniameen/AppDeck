@@ -16,6 +16,8 @@ constexpr const char* proxyProbeHost="api.openai.com";constexpr unsigned proxyPr
 // Loopback never goes through the proxy (the bridge itself lives there).
 constexpr const char* proxyBypassChromium="localhost;127.0.0.1;[::1]";
 constexpr const char* proxyBypassEnv="localhost,127.0.0.1,::1";
+// Restricts Chromium's own resolver, not arbitrary native helpers or the operating system.
+constexpr const char* proxyResolverArgument="--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE localhost, EXCLUDE 127.0.0.1, EXCLUDE [::1]";
 
 inline bool proxyCopy(const char* from,const char* to,char* out,Size cap){
  Size n=(Size)(to-from);if(n>=cap)return false;for(Size i=0;i<n;++i)out[i]=from[i];out[n]=0;return true;

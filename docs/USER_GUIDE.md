@@ -26,7 +26,7 @@ AppDeck runs several accounts of the same desktop app side by side on macOS — 
 ![The main window: four Codex profiles with their accounts and usage limits](images/main-window.png)
 
 1. **Add an app.** Click **Add app** in the sidebar and choose any installed macOS `.app`. AppDeck detects profile adapters for Codex (`ChatGPT.app`), Claude Desktop, VS Code / Cursor, Chromium browsers and other Electron apps. Other apps get one ordinary launch card, using their existing data. The original `.app` is never copied or modified.
-2. **Create profiles if needed.** In a supported app, each profile has its own private data folder and sign-in. Use **New profile** for more; Claude offers a clean Desktop profile by default or a profile that can share selected Code sessions. To use the app's existing data instead, select **Ordinary launch (no profiles)** when adding it.
+2. **Create profiles if needed.** In a supported app, each profile has its own private data folder and sign-in. Use **New profile** for more; Claude offers a new clean profile with private Code storage or a profile that can share selected Code sessions. To use the app's existing data instead, select **Ordinary launch (no profiles)** when adding it.
 3. **Launch and sign in.** Click **Launch** on a card and sign in inside the app window. Sign in to one new account at a time.
 4. **Switch.** Click **Show window** on a card, press **⌘1–9** while AppDeck is active, or open the [side panel](#the-side-panel) with **⌃⌥Space** from anywhere.
 
@@ -55,7 +55,7 @@ AppDeck separates **data**, not security domains: every profile runs as your mac
 | Adapter | How a profile is isolated | Shared on purpose |
 |---|---|---|
 | Codex (`ChatGPT.app`) | Own `CODEX_HOME`, `CODEX_ELECTRON_USER_DATA_PATH` and `--user-data-dir` in the profile folder | Optional: settings, history, projects and automations — see below |
-| Claude Desktop | Own Desktop data; clean mode stays outside the session bridge | Both modes keep global Code settings and transcripts in the usual `~/.claude`; shared-session mode can use the opt-in bridge |
+| Claude Desktop | Own Desktop data; new clean profiles also get private Code storage | Existing profiles keep their earlier Code environment; shared-session mode can use the opt-in bridge |
 | VS Code / Cursor | Own `--user-data-dir` and `--extensions-dir` | Nothing |
 | Chromium browsers | Own `--user-data-dir` | Nothing |
 | Other Electron apps | Own `--user-data-dir` (experimental) | Nothing |
@@ -141,21 +141,27 @@ Add `Claude.app` with **Add app**; the Claude Desktop adapter is preselected. Th
 
 Click **New profile**, enter a name and choose the mode:
 
-- **Clean Desktop profile (no shared sessions)** is selected by default. It starts with empty Desktop data and separate temporary storage. You can launch it while another Claude copy is running, then sign in inside the new window. AppDeck does not scan this profile for the session bridge or import shared sessions into it.
-- **Profile with shared Code sessions** uses separate Desktop data and can participate in the optional bridge. On supported Claude versions, the bridge registers a conversation you select in another participating profile.
+- A new **clean profile** starts with empty Desktop data and an empty private Code folder. It can launch while another Claude copy is running. AppDeck does not copy your existing Code settings, skills, memory, transcripts or authentication into it, and does not include the profile in the session bridge.
+- **Profile with shared Code sessions** uses separate Desktop data and the usual Code environment. On supported Claude versions, the optional bridge registers a conversation you select in another participating profile.
 
-**Both modes keep the normal global Code settings and transcripts in your macOS user's `~/.claude`.** Clean mode does not reset CLI settings, skills, memory or local transcripts. AppDeck preserves the real macOS home so Claude can use the login Keychain. macOS permissions and Keychain identity remain shared at the OS level; this is not a new macOS user or a virtual machine.
+**Existing profiles are preserved.** A clean Desktop profile created before 0.14 still uses the usual global Code configuration and transcripts in `~/.claude`; it is not silently converted or cleared. To get private Code storage, create a new clean profile. **Duplicate** opens the same chooser and creates new storage rather than copying the source account.
 
-The choice is saved for that profile. Existing profiles keep their earlier mode and data. **Duplicate** opens the same chooser, with clean mode selected; it creates new Desktop storage rather than copying the source account. The card displays the saved mode.
+| Data | New clean profile with private Code storage | Existing Desktop-only clean profile | Profile with shared Code sessions |
+|---|---|---|---|
+| Desktop sign-in, cookies, window settings and MCP configuration | New profile data; nothing copied | Existing private Desktop data | Separate private Desktop data |
+| Code configuration, skills, memory and local transcripts | Private `claude-code` folder, initially empty | Usual `~/.claude` | Usual `~/.claude` |
+| Native Desktop Code session list | Own list; excluded from the bridge | Own list; excluded from the bridge | Own account-scoped list; optional bridge registration |
+| Account limits | Separate Claude Code meter sign-in | Separate Claude Code meter sign-in | Separate Claude Code meter sign-in |
 
-| Data | Clean Desktop profile | Profile with shared Code sessions |
-|---|---|---|
-| Desktop sign-in, cookies, window settings and MCP configuration | New profile data; nothing copied | New profile data; nothing copied |
-| Global Code configuration, skills, memory and transcripts | Usual `~/.claude`, not isolated by this mode | Usual `~/.claude` |
-| Native Desktop Code session list | Own list; excluded from the bridge | Own account-scoped list; optional bridge registration |
-| Account limits | Separate Claude Code meter sign-in, described below | Separate Claude Code meter sign-in, described below |
+AppDeck preserves the real macOS home so Claude can use the login Keychain. The private Code folder applies to the new profile through `CLAUDE_CONFIG_DIR`; it does not create a new macOS user, reset system permissions or change the system Keychain. No authentication data, cookies or conversations are copied. Compatibility still depends on the installed Claude and embedded Code versions.
 
-AppDeck never copies authentication data, cookies or conversations. Compatibility still depends on the installed Claude version.
+### Proxy and optional traffic
+
+The creation dialog also selects a saved proxy, requires that proxy for launch, optionally blocks the linked Chrome profile's local DNS bypass, and disables optional Code traffic/error reports. If there is one saved proxy and no default, it is selected for a new profile. **Add…** opens the proxy editor. **Also create a separate Chrome profile for claude.ai** creates empty browser storage with the same proxy choice; **More → Open Claude in private Chrome…** opens it. No browser data is copied.
+
+Use **More → Claude profile settings…** to change these options after closing Claude and its linked browser. The storage mode of an existing profile cannot be changed in place. Proxy credentials stay in `proxies.plist`; only a temporary loopback bridge address goes into the new profile's Code settings. Unrelated Code settings are preserved with a backup. Required-proxy mode cancels a new launch if the proxy is missing or the local bridge cannot start.
+
+The optional-traffic setting also disables Code auto-updates, experiments and Remote Control; the separate usage meter keeps its own safe configuration. Proxy flags and hosts mappings do not block every native/helper/UDP connection. For a strict network boundary use OS or network egress rules. The dialog's **Network setup guide** explains Tailscale/VPS setup, supported variables, DNS/WebRTC controls and their limits; it is also available as [Claude network setup](CLAUDE_NETWORK.md).
 
 ### Local Code sessions across accounts
 
@@ -163,7 +169,7 @@ In a Claude group, enable **Shared settings → Session bridge** or **Code sessi
 
 Choose a profile and confirm the project folder and transfer of the local conversation context. AppDeck starts that profile only as part of this explicit action if needed, then sends Claude's own resume URL to the **exact process**, rather than opening the URL through the system-wide app handler. Claude registers the existing local transcript under its current sign-in; AppDeck never edits its session descriptors, copies transcripts, sends a model prompt, imports permissions or transfers account data. The selected conversation can then appear in that profile's native Code sidebar. This is registration on selection, not automatic replication of every native sidebar.
 
-Quit other Claude Desktop instances first, and close terminal sessions using the same conversation. AppDeck cannot determine live task activity from saved descriptors. It conservatively reserves the selected Desktop process and refuses another shared-mode Claude profile launch through AppDeck until that process exits. A clean profile can still launch because AppDeck does not import bridged sessions into it. Its global CLI configuration and transcripts are still shared; the reservation is not a lock on every external or manual Code operation. The reservation is stored in AppDeck's own Shared folder and survives a manager restart; damaged or unexpectedly missing reservations block switching. It does not control external launches or provide a vendor-wide writer lock.
+Quit other Claude Desktop instances first, and close terminal sessions using the same conversation. AppDeck cannot determine live task activity from saved descriptors. It conservatively reserves the selected Desktop process and refuses another shared-mode Claude profile launch through AppDeck until that process exits. A clean profile can still launch because AppDeck does not import bridged sessions into it. Older Desktop-only clean profiles still use the global CLI configuration and transcripts; newly created clean profiles use private Code storage. The reservation is not a lock on every external or manual Code operation. The reservation is stored in AppDeck's own Shared folder and survives a manager restart; damaged or unexpectedly missing reservations block switching. It does not control external launches or provide a vendor-wide writer lock.
 
 **Waiting for registration** means only that the open request was delivered. Success requires a new or updated native descriptor in the chosen profile with the selected transcript ID and project folder. An old descriptor is not confirmation. After 45 seconds without that evidence, AppDeck reports that registration was not confirmed; check sign-in and any Claude dialog, then retry. An uncertain delivery retains the reservation until the selected process exits.
 

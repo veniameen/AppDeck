@@ -1,5 +1,5 @@
 # AppDeck — native macOS profile manager. Everything runs on macOS with the Command Line Tools.
-.PHONY: all app test test-claude-sessions test-claude-profiles verify install clean help
+.PHONY: all app test test-claude-sessions test-claude-profiles test-claude-network verify install clean help
 
 all: app
 
@@ -14,6 +14,9 @@ test-claude-sessions: ## Offline macOS Claude session fixtures for both architec
 
 test-claude-profiles: ## Native clean-profile launch fixtures for both architectures; no real Claude
 	@bash scripts/test-claude-profiles.sh
+
+test-claude-network: ## Linked browser and real proxy bridge fixtures; no vendor app or upstream requests
+	@bash scripts/test-claude-network.sh
 
 verify:     ## Full acceptance on this Mac: build, tests, native sync fixtures, API/AX smoke tests
 	@scripts/verify.sh

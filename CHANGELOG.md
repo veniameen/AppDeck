@@ -2,6 +2,19 @@
 
 All notable changes to AppDeck. Verification details for the current release are in [docs/TESTING.md](docs/TESTING.md).
 
+## 0.14.0
+
+### Added
+
+- Newly created clean Claude profiles can use empty private Code configuration and transcript storage in `Profiles/<id>/claude-code`, while preserving the real macOS home for login Keychain compatibility. The choice is recorded separately from the existing Desktop-clean mode; older profiles are not migrated or cleared.
+- Claude profile creation/settings include saved-proxy selection, required-proxy launch, optional linked-Chrome DNS hardening, five Code optional-traffic switches and a linked empty Chrome profile for Claude Web. Private Code user settings receive only the safe network allowlist, with preserved unrelated fields and an atomic backup. Proxy credentials remain in the existing secure proxy store.
+- Bundled network setup guide explains HTTP CONNECT through a Tailscale VPS, the scope of proxy/DNS/WebRTC controls and why hosts entries do not provide a complete egress firewall. Native fixtures cover linked-browser configuration and bridge lifecycle on both architectures.
+
+### Changed
+
+- The profile-isolation rule now permits an AppDeck-selected `CLAUDE_CONFIG_DIR` only for a newly created, explicitly selected clean profile with private Code storage. Standard and primary profiles retain the usual Code environment. No source settings, transcripts or authentication are copied.
+- A failed proxy handoff now cancels launch and requests normal termination of the new process instead of continuing with a stopped bridge. Required-proxy usage probes also fail without substituting a direct connection.
+
 ## 0.13.0
 
 ### Added

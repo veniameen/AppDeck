@@ -154,6 +154,14 @@ def main():
     resources.mkdir(parents=True, exist_ok=True)
     (resources / 'Help.html').write_text(page, encoding='utf-8')
     print(f'Help.html: {len(page):,} bytes')
+    network_guide = GUIDE.parent / 'CLAUDE_NETWORK.md'
+    if network_guide.exists():
+        network_body = render(network_guide.read_text(encoding='utf-8'))
+        network_page = ('<!doctype html>\n<html lang="en"><head><meta charset="utf-8">'
+                        '<meta name="viewport" content="width=device-width,initial-scale=1">'
+                        f'<title>Claude network setup</title><style>{CSS}</style></head>'
+                        f'<body><main>{network_body}</main></body></html>\n')
+        (resources / 'ClaudeNetwork.html').write_text(network_page, encoding='utf-8')
 
 
 if __name__ == '__main__':

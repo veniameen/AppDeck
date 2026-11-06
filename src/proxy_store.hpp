@@ -52,6 +52,7 @@ bool proxyUnresolved(Obj p){
  return isClass(get(state,"defaultProxy"),"NSString")&&!proxyDefault();
 }
 bool proxyBlocked(Obj p){
+ if(truth(get(p,"proxyRequired"))&&!proxyFor(p)){showError(str(T("This profile requires a proxy","Для этого профиля обязателен прокси")),str(T("Choose an available proxy in the profile settings. Launch was cancelled; a direct connection was not substituted.","Выберите доступный прокси в настройках профиля. Запуск отменён, прямое подключение не использовано.")));return true;}
  if(!proxiesDamaged||!proxyUnresolved(p))return false;
  showError(str(T("Proxy settings were not read","Настройки прокси не прочитаны")),str(T("This profile uses a proxy from proxies.plist, which AppDeck could not read, so it was not started. Fix or remove the file in AppDeck’s data folder and restart AppDeck.","Этот профиль использует прокси из proxies.plist, который AppDeck не смог прочитать, поэтому профиль не запущен. Исправьте или удалите файл в папке данных AppDeck и перезапустите AppDeck.")));return true;
 }
@@ -129,7 +130,7 @@ void proxyForget(Obj x){const char* key=utf8(get(x,"id"));Obj b=get(proxyProbeBr
 void proxyReap(){for(UInt i=count(proxyTasks);i>0;--i)if(!send<bool>(at(proxyTasks,i-1),"isRunning"))send<void>(proxyTasks,"removeObjectAtIndex:",i-1);}
 // Limit probes of a profile behind a proxy go through it too; false = the proxy is unavailable (cached numbers stay).
 bool usageProxy(Obj p,Obj env){
- Obj x=proxyFor(p);if(!x)return true;Obj why=nullptr;int port=proxyProbePort(x,&why);
+ Obj x=proxyFor(p);if(!x&&!truth(get(p,"proxyRequired")))return true;Obj why=nullptr;int port=x?proxyProbePort(x,&why):0;
  if(port<=0){Obj old=usageOf(p);Obj u=old?send(old,"mutableCopy"):make("NSMutableDictionary");put(u,"error",str("proxy"));put(u,"checked",real(nowUnix()));put(p,"usage",u);drop(u);return false;}
  proxyApplyEnv(env,port);return true;
 }
