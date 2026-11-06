@@ -1,11 +1,18 @@
 #include "mac.hpp"
+#include <dirent.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <stdio.h>
+#include <sys/stat.h>
+#include <unistd.h>
 #include "core.hpp"
 #include "edge_policy.hpp"
 #include "usage_policy.hpp"
 #include "proxy_policy.hpp"
+#include "claude_session_policy.hpp"
 using namespace mac;
 namespace {
-constexpr const char* VERSION="0.12.1";
+constexpr const char* VERSION="0.13.0";
 void* appKit=nullptr;
 Obj app=nullptr,window=nullptr,controller=nullptr,rootView=nullptr;
 Obj state=nullptr,apps=nullptr,profiles=nullptr,projects=nullptr,selected=nullptr;
@@ -22,7 +29,7 @@ bool ruUI=false;
 inline const char* T(const char* en,const char* ru){return ruUI?ru:en;}
 int lockFd=-1;
 const unsigned colors[6]={0x89C5F7,0x8BD0A3,0xDEB775,0xF3A98F,0xEFA4C1,0x6CD1D1};
-void buildUI();void buildMenus();void save();void refresh();
+void buildUI();void buildMenus();bool save();void refresh();
 void showError(Obj title,Obj message);
 Obj currentApp();
 Obj edgeTargetScreen();void setEdgeVisible(bool);
@@ -34,6 +41,8 @@ bool groupSyncEnabled(Obj);Obj syncGroup(Obj,bool);void groupSyncPump(bool);void
 bool usageProxy(Obj,Obj);void proxyProfileMenu(Obj,Obj,Int); // proxy_store.hpp / proxy_views.hpp
 Obj proxyFor(Obj);Obj proxyServe(Obj,Obj*);void proxyApply(Obj,Obj,int);bool proxyWatch(Obj,int);void proxyAbandon(Obj);bool proxyBlocked(Obj);void proxyUnavailable(Obj,Obj);
 void proxyApplyEnv(Obj,int);
+bool launch(Obj,bool);
+void newClaudeProfileDialog(Obj,Obj,Int,Obj);
 Obj color(double r,double g,double b,double a=1){return send(cls("NSColor"),"colorWithSRGBRed:green:blue:alpha:",r,g,b,a);}
 // Design tokens ("Graphite glass"): warm bone ink on dark glass. Colour appears only for state (live,
 // warn, danger) and for the profile's identity badge; controls are neutral glass.
@@ -114,11 +123,11 @@ Obj prompt(const char* title,const char* info,Obj initial){
  if(send<Int>(a,"runModal")==1000){Obj trimmed=send(send(field,"stringValue"),"stringByTrimmingCharactersInSet:",send(cls("NSCharacterSet"),"whitespaceAndNewlineCharacterSet"));if(send<UInt>(trimmed,"length")>0&&send<UInt>(trimmed,"length")<=64)result=keep(trimmed);else showError(str(T("Name not saved","Название не сохранено")),str(T("Enter 1 to 64 characters.","Введите от 1 до 64 символов.")));}
  drop(field);drop(a);return autoRelease(result);
 }
-void save(){
- if(!state||previewMode)return;put(state,"schema",num(2));if(selected)put(state,"selected",selected);else erase(state,"selected");
- Obj p=join(dataRoot,"state.plist");if(symlink(p)){showError(str(T("Data protection","Защита данных")),str(T("state.plist must not be a symbolic link.","state.plist не должен быть символической ссылкой.")));return;}
- if(!send<bool>(state,"writeToFile:atomically:",p,true))showError(str(T("Could not save","Не удалось сохранить")),str(T("Check the permissions of the AppDeck folder in Library/Application Support.","Проверьте права на папку AppDeck в Library/Application Support.")));
- else chmod(utf8(p),0600);
+bool save(){
+ if(!state||previewMode)return false;put(state,"schema",num(2));if(selected)put(state,"selected",selected);else erase(state,"selected");
+ Obj p=join(dataRoot,"state.plist");if(symlink(p)){showError(str(T("Data protection","Защита данных")),str(T("state.plist must not be a symbolic link.","state.plist не должен быть символической ссылкой.")));return false;}
+ if(!send<bool>(state,"writeToFile:atomically:",p,true)){showError(str(T("Could not save","Не удалось сохранить")),str(T("Check the permissions of the AppDeck folder in Library/Application Support.","Проверьте права на папку AppDeck в Library/Application Support.")));return false;}
+ return chmod(utf8(p),0600)==0;
 }
 Obj mutablePlist(Obj path){
  Obj d=send(cls("NSData"),"dataWithContentsOfFile:",path);if(!d)return nullptr;
@@ -143,6 +152,8 @@ void load(){
  for(UInt i=0;i<count(profiles);++i){Obj p3=at(profiles,i);
   for(const char* key:{"pid","started","color","share","launchCheck","uiRunning","master"})if(get(p3,key)&&!isClass(get(p3,key),"NSNumber")){showError(str(T("Invalid profile parameters","Некорректные параметры профиля")),str(T("Expected numeric parameters in state.plist.","Ожидались числовые параметры в state.plist.")));exit(2);}
   if(!get(p3,"color"))put(p3,"color",num(0));usageSanitize(p3);
+  if(Obj mode=get(p3,"claudeClean")){double v=send<double>(isClass(mode,"NSNumber")?mode:(Obj)nullptr,"doubleValue");
+   if(!isClass(mode,"NSNumber")||(v!=0&&v!=1)||(v==1&&(truth(get(p3,"master"))||deck::adapter(utf8(get(appFor(p3),"adapter")))!=deck::Adapter::Claude))){showError(str(T("Invalid Claude profile mode","Некорректный режим профиля Claude")),str(T("claudeClean must be a boolean on a separate Claude profile. Nothing was changed.","claudeClean должен быть логическим значением отдельного профиля Claude. Ничего не изменено.")));exit(2);}}
  }
  for(UInt i=0;i<count(projects);++i){Obj p4=at(projects,i);if(!isClass(p4,"NSDictionary")||!isClass(get(p4,"path"),"NSString")||!isClass(get(p4,"name"),"NSString")){showError(str(T("Invalid project folder","Некорректная папка проекта")),str(T("Check state.plist.","Проверьте state.plist.")));exit(2);}}
  // Up to 0.8 the dock grouped profiles by app. Adopt that order once, so nothing moves on upgrade;
@@ -155,6 +166,8 @@ void load(){
   if(get(a,"baseSource")&&(!isClass(get(a,"baseSource"),"NSString")||!deck::absoluteLocalPath(utf8(get(a,"baseSource")))||deck::inside(utf8(dataRoot),utf8(get(a,"baseSource"))))){showError(str(T("Invalid settings source","Некорректный источник настроек")),str(T("baseSource must point to an absolute path outside AppDeck's data.","baseSource должен указывать на внешний абсолютный путь, не на данные AppDeck.")));exit(2);}
   if(get(a,"usageLimits")&&!isClass(get(a,"usageLimits"),"NSNumber")){showError(str(T("Invalid limits setting","Некорректная настройка лимитов")),str(T("usageLimits must be a boolean.","usageLimits должен быть логическим значением.")));exit(2);}
   if(get(a,"sharedHistory")&&!isClass(get(a,"sharedHistory"),"NSNumber")){showError(str(T("Invalid history setting","Некорректная настройка истории")),str(T("sharedHistory must be a boolean.","sharedHistory должен быть логическим значением.")));exit(2);}
+  if(get(a,"claudeSessionBridge")&&!isClass(get(a,"claudeSessionBridge"),"NSNumber")){showError(str(T("Invalid Claude session setting","Некорректная настройка сессий Claude")),str(T("claudeSessionBridge must be a boolean.","claudeSessionBridge должен быть логическим значением.")));exit(2);}
+  if(get(a,"claudeBridgeLeaseRecorded")&&!isClass(get(a,"claudeBridgeLeaseRecorded"),"NSNumber")){showError(str(T("Invalid Claude reservation setting","Некорректная настройка резервирования Claude")),str(T("claudeBridgeLeaseRecorded must be a boolean.","claudeBridgeLeaseRecorded должен быть логическим значением.")));exit(2);}
   if(get(a,"seedWorkspace")&&!isClass(get(a,"seedWorkspace"),"NSNumber")){showError(str(T("Invalid import setting","Некорректная настройка импорта")),str(T("seedWorkspace must be a boolean.","seedWorkspace должен быть логическим значением.")));exit(2);}
  }
  events=keep(array());cardRefs=keep(dict());
@@ -195,10 +208,13 @@ bool ensureShared(Obj a){
 #include "automation_sync.hpp"
 #include "project_server_sync.hpp"
 #include "group_sync.hpp"
+#include "claude_profile.hpp"
+#include "claude_sessions.hpp"
 Obj prepare(Obj p){
  Obj a=appFor(p),base=profileRoot(p);if(!a||!base)return str(T("App not found or invalid profile ID.","Не найдено приложение или некорректный ID профиля."));
  if(isStandalone(a))return str(T("This app uses its existing data. Separate profiles are unavailable.","Это приложение использует существующие данные. Отдельные профили недоступны."));
  if(!mkdirPrivate(base)||!mkdirPrivate(join(base,"user-data")))return str(T("Could not create the private profile folders (0700). Symbolic links are not allowed.","Не удалось создать закрытые папки профиля (0700). Символические ссылки не допускаются."));
+ if(deck::adapter(utf8(get(a,"adapter")))==deck::Adapter::Claude)return prepareClaudeProfile(p);
  if(deck::adapter(utf8(get(a,"adapter")))!=deck::Adapter::Codex)return nullptr;
  Obj ch=join(base,"codex");if(!mkdirPrivate(ch)||!ensureShared(a))return str(T("Could not prepare the Codex folders.","Не удалось подготовить папки Codex."));
  bool shared=truth(get(p,"share"));Obj cfg=nullptr;
@@ -223,11 +239,12 @@ Obj prepare(Obj p){
 // Neither a profile nor a limits probe may inherit a terminal/API identity or another profile's homes.
 Obj cleanEnvironment(){
  Obj env=autoRelease(send(send(send(cls("NSProcessInfo"),"processInfo"),"environment"),"mutableCopy"));
- for(const char* k:{"OPENAI_API_KEY","CODEX_API_KEY","CODEX_ACCESS_TOKEN","OPENAI_ACCESS_TOKEN","CODEX_CHATGPT_ACCESS_TOKEN","CODEX_HOME","CODEX_SQLITE_HOME","CODEX_ELECTRON_USER_DATA_PATH","ELECTRON_RUN_AS_NODE","NODE_OPTIONS","CODEX_AUTH_JSON","CHATGPT_ACCESS_TOKEN","OPENAI_ORG_ID","OPENAI_ORGANIZATION","OPENAI_PROJECT_ID","CLAUDE_USER_DATA_DIR","ANTHROPIC_API_KEY","ANTHROPIC_AUTH_TOKEN","CLAUDE_CODE_OAUTH_TOKEN"})erase(env,k);
+ for(const char* k:{"OPENAI_API_KEY","CODEX_API_KEY","CODEX_ACCESS_TOKEN","OPENAI_ACCESS_TOKEN","CODEX_CHATGPT_ACCESS_TOKEN","CODEX_HOME","CODEX_SQLITE_HOME","CODEX_ELECTRON_USER_DATA_PATH","ELECTRON_RUN_AS_NODE","NODE_OPTIONS","CODEX_AUTH_JSON","CHATGPT_ACCESS_TOKEN","OPENAI_ORG_ID","OPENAI_ORGANIZATION","OPENAI_PROJECT_ID","CLAUDE_USER_DATA_DIR","CLAUDE_CONFIG_DIR","ANTHROPIC_API_KEY","ANTHROPIC_AUTH_TOKEN","CLAUDE_CODE_OAUTH_TOKEN"})erase(env,k);
  return env;
 }
 bool launch(Obj p,bool activate=true){
- if(!p)return false;if(Obj r=running(p)){syncGroup(appFor(p),false);if(activate)focus(r);return true;}
+ if(!p||claudeLaunchInProgress(p))return false;if(Obj failure=claudeLaunchGate(p)){showError(str(T("Claude session is reserved","Сессия Claude зарезервирована")),failure);return false;}
+ if(Obj r=running(p)){syncGroup(appFor(p),false);if(activate)focus(r);return true;}
  // A copy that AppDeck lost track of still owns its user-data folder: adopt it, never start a twin.
  if(Obj r=ownedProcess(p)){if(adopt(p,r)){save();refresh();if(activate)focus(r);return true;}}
  Obj a=appFor(p),path=get(a,"path");
@@ -246,7 +263,7 @@ bool launch(Obj p,bool activate=true){
  if(adapter==deck::Adapter::Codex){put(env,"CODEX_HOME",join(base,"codex"));put(env,"CODEX_ELECTRON_USER_DATA_PATH",ud);
   // Codex's own switch for the thread/project databases; everything else stays in the copy's CODEX_HOME.
   if(sharesHistory(p)){put(env,"CODEX_SQLITE_HOME",canonical(baseSource(a)));put(p,"historyMode",str("shared"));}else erase(p,"historyMode");}
- if(adapter==deck::Adapter::Claude)put(env,"CLAUDE_USER_DATA_DIR",ud);
+ if(adapter==deck::Adapter::Claude)applyClaudeEnvironment(p,env);
  if(adapter==deck::Adapter::VSCode){add(args,str("--new-window"));add(args,cat(str("--extensions-dir="),join(base,"extensions")));}
  if(proxyBlocked(p))return false; // its proxy is named in settings AppDeck could not read: never start it without one
  Obj config=dict();Obj ek=publicConstant(appKit,"NSWorkspaceLaunchConfigurationEnvironment");Obj ak=publicConstant(appKit,"NSWorkspaceLaunchConfigurationArguments");
@@ -262,9 +279,9 @@ bool launch(Obj p,bool activate=true){
  }
  Obj err=nullptr;
  UInt options=(1UL<<19)|(activate?0:(1UL<<9)); // NSWorkspaceLaunchNewInstance / WithoutActivation
- Obj r=send(workspace,"launchApplicationAtURL:options:configuration:error:",url(path),options,config,&err);
+ Obj r=adapter==deck::Adapter::Claude?launchClaudeProcess(p,env,args,activate,&err):send(workspace,"launchApplicationAtURL:options:configuration:error:",url(path),options,config,&err);
  if(!r)proxyAbandon(bridge);
- if(!r){put(p,"lastError",err?send(err,"localizedDescription"):str(T("LaunchServices returned no process.","LaunchServices не вернул процесс.")));save();showError(str(T("Could not launch","Не удалось запустить")),get(p,"lastError"));return false;}
+ if(!r){put(p,"lastError",err?send(err,"localizedDescription"):str(adapter==deck::Adapter::Claude?T("Claude did not register a separate application process.","Claude не зарегистрировал отдельный процесс приложения."):T("LaunchServices returned no process.","LaunchServices не вернул процесс.")));save();showError(str(T("Could not launch","Не удалось запустить")),get(p,"lastError"));return false;}
  int pid=send<int>(r,"processIdentifier");
  for(UInt i=0;i<count(alreadyRunning);++i)if(integer(at(alreadyRunning,i))==pid){
   proxyAbandon(bridge); // not our new process: the bridge has nothing to serve
@@ -273,11 +290,11 @@ bool launch(Obj p,bool activate=true){
  }
  for(UInt i=0;i<count(profiles);++i){Obj other=at(profiles,i);if(other!=p&&running(other)&&integer(get(other,"pid"))==pid){
   proxyAbandon(bridge);showError(str(T("The app merged the instances","Приложение объединило экземпляры")),str(T("The adapter could not create a separate process. Do not change the account in this window: it belongs to another profile. This app version is not compatible.","Адаптер не смог создать отдельный процесс. Не меняйте аккаунт в этом окне: оно принадлежит другому профилю. Эта версия приложения несовместима.")));return false;}}
- Obj date=send(r,"launchDate");if(!date){proxyAbandon(bridge);showError(str(T("Could not confirm the process","Не удалось подтвердить процесс")),str(T("The app started, but macOS did not return its launch time. Check the window manually.","Приложение запущено, но macOS не вернула время запуска. Проверьте окно вручную.")));return false;}
+ double started=processStarted(r);if(started<=0){proxyAbandon(bridge);showError(str(T("Could not confirm the process","Не удалось подтвердить процесс")),str(T("The app started, but macOS did not return its launch time. Check the window manually.","Приложение запущено, но macOS не вернула время запуска. Проверьте окно вручную.")));return false;}
  // The bridge serves this very process from now on (it keeps running if AppDeck quits).
  if(bridge){if(!proxyWatch(bridge,pid))showError(str(T("The proxy bridge stopped","Мост прокси остановился")),str(T("The window was started through a bridge that is no longer running, so its connections will fail. Restart the profile.","Окно запущено через мост, который уже не работает, поэтому его соединения не пройдут. Перезапустите профиль.")));put(p,"proxyUsed",get(proxy,"name"));}
  else erase(p,"proxyUsed");
- put(p,"pid",num(pid));put(p,"started",real(send<double>(date,"timeIntervalSince1970")));erase(p,"lastError");
+ put(p,"pid",num(pid));put(p,"started",real(started));erase(p,"lastError");
  put(p,"launchCheck",real(send<double>(send(cls("NSDate"),"date"),"timeIntervalSince1970")+8));
  note(sharesHistory(p)?"Profile launched with the shared thread database; credentials are not inspected.":"Profile launched; credentials are not inspected.");save();refresh();return true;
 }
@@ -331,6 +348,7 @@ bool moveProfileInList(Obj p,Obj list,Int to){
 void profileMoveUpAction(Obj,Sel,Obj sender){Obj p=fromSender(sender),ps=visibleProfiles();if(p)moveProfileInList(p,ps,(Int)send<UInt>(ps,"indexOfObjectIdenticalTo:",p)-1);}
 void profileMoveDownAction(Obj,Sel,Obj sender){Obj p=fromSender(sender),ps=visibleProfiles();if(p)moveProfileInList(p,ps,(Int)send<UInt>(ps,"indexOfObjectIdenticalTo:",p)+1);}
 void duplicateAction(Obj,Sel,Obj sender){Obj p=fromSender(sender);if(!p||isStandalone(appFor(p)))return;
+ if(claudeGroup(appFor(p))){newClaudeProfileDialog(appFor(p),cat(get(p,"name"),str(T(" · copy"," · копия"))),integer(get(p,"color"))+1,p);return;}
  Obj name=prompt(T("New independent profile","Новый независимый профиль"),T("Only the profile settings are copied. Sign-in, history and cookies are not.","Копируются только параметры профиля. Вход, история и cookies не переносятся."),cat(get(p,"name"),str(T(" · copy"," · копия"))));
  if(name){newProfile(appFor(p),name,integer(get(p,"color"))+1,isMaster(p)||truth(get(p,"share")),p);save();buildUI();buildMenus();}}
 void profileErrorAction(Obj,Sel,Obj sender){Obj p=fromSender(sender);if(!p||!get(p,"lastError")||previewMode)return;frontForModal();
@@ -500,6 +518,29 @@ Obj popup(Obj parent,Rect f,const char* const* choices,UInt n,Int selectedIndex)
  Obj p=send(send(cls("NSPopUpButton"),"alloc"),"initWithFrame:pullsDown:",f,false);
  for(UInt i=0;i<n;++i)send<void>(p,"addItemWithTitle:",str(choices[i]));send<void>(p,"selectItemAtIndex:",selectedIndex);send<void>(parent,"addSubview:",p);drop(p);return p;
 }
+Obj claudeProfileForm(Obj initial,Obj* nameField,Obj* modeField){
+ Obj view=send(send((Obj)deckViewClass,"alloc"),"initWithFrame:",rect(0,0,500,250));
+ label(view,T("Profile name","Имя профиля"),rect(0,4,122,22),13,ink());
+ Obj field=send(send(cls("NSTextField"),"alloc"),"initWithFrame:",rect(130,0,370,26));send<void>(field,"setStringValue:",initial);send<void>(view,"addSubview:",field);drop(field);
+ label(view,T("Environment","Среда"),rect(0,44,122,22),13,ink());
+ const char* modes[]={T("Clean Desktop profile · no shared sessions","Чистый Desktop · без общих сессий"),T("Profile with shared Code sessions","Профиль с общими сессиями Code")};
+ Obj mode=popup(view,rect(130,38,370,28),modes,2,0);
+ label(view,T("Clean profile starts with empty Claude Desktop data and no shared sessions. Sign in again, even while another copy is running.","Чистый профиль начинает с пустых данных Claude Desktop без общих сессий. Войдите заново, даже если другая копия уже работает."),rect(0,82,500,52),12,muted());
+ label(view,T("The other mode also starts with a separate Desktop sign-in, and can use selected local conversations when the session bridge is enabled.","Второй режим также создаёт отдельный вход Desktop и позволяет использовать выбранные локальные переписки при включённом обмене сессиями."),rect(0,142,500,52),12,muted());
+ label(view,T("Global Claude Code settings and macOS permissions remain shared in both modes.","Глобальные настройки Claude Code и разрешения macOS остаются общими в обоих режимах."),rect(0,208,500,38),12,faint());
+ *nameField=field;*modeField=mode;return view;
+}
+void newClaudeProfileDialog(Obj a,Obj initial,Int colorIndex,Obj after){
+ if(previewMode)return;frontForModal();Obj alert=make("NSAlert");send<void>(alert,"setMessageText:",str(T("New Claude profile","Новый профиль Claude")));
+ send<void>(alert,"setInformativeText:",str(T("Choose how this profile stores its local data. Sign in inside its window after launch.","Выберите, как профиль хранит локальные данные. Вход выполняется в его окне после запуска.")));
+ Obj nameField=nullptr,modeField=nullptr,view=claudeProfileForm(initial,&nameField,&modeField);send<void>(alert,"setAccessoryView:",view);
+ send(alert,"addButtonWithTitle:",str(T("Create profile","Создать профиль")));send(alert,"addButtonWithTitle:",str(T("Cancel","Отмена")));send<void>(send(alert,"window"),"setInitialFirstResponder:",nameField);
+ if(send<Int>(alert,"runModal")==1000){Obj name=send(send(nameField,"stringValue"),"stringByTrimmingCharactersInSet:",send(cls("NSCharacterSet"),"whitespaceAndNewlineCharacterSet"));
+  if(!send<UInt>(name,"length")||send<UInt>(name,"length")>64)showError(str(T("Profile not created","Профиль не создан")),str(T("Enter 1 to 64 characters.","Введите от 1 до 64 символов.")));
+  else{Obj p=newProfile(a,name,colorIndex,false,after);put(p,"claudeClean",boolean(send<Int>(modeField,"indexOfSelectedItem")==0));page=0;save();buildUI();buildMenus();}
+ }
+ drop(view);drop(alert);
+}
 Obj registerApplication(Obj path,deck::Adapter adapter,bool primary){
  if(adapter==deck::Adapter::Unsupported||!deck::suffix(utf8(path),".app")||!exists(join(path,"Contents/Info.plist")))return nullptr;
  for(UInt i=0;i<count(apps);++i)if(same(canonical(get(at(apps,i),"path")),canonical(path)))return at(apps,i);
@@ -528,7 +569,7 @@ void chooseApplication(Obj,Sel,Obj){
   drop(selected);selected=keep(get(item,"id"));page=0;save();buildUI();buildMenus();note("Standalone application registered without profile folders.");return;
  }
  Obj a=make("NSAlert");send<void>(a,"setMessageText:",cat(str(T("Add ","Добавить ")),name));
- send<void>(a,"setInformativeText:",str(T("The original .app is not modified. AppDeck creates profile folders, not copies of the program: each profile has its own sign-in. With the Codex adapter, tokens are kept in auth.json inside the private profile folder, not in the Keychain. Claude Desktop gets its own data folder through its CLAUDE_USER_DATA_DIR variable; the settings and history of its Code tab (~/.claude) stay shared. Check compatibility with your app version.","Исходное .app не изменяется. Создаются папки профилей, а не копии программы: у каждого профиля свой вход. В адаптере Codex токены хранятся в auth.json внутри закрытой папки профиля, а не в Keychain. Claude Desktop получает свою папку данных через штатную переменную CLAUDE_USER_DATA_DIR; настройки и история вкладки Code (~/.claude) остаются общими. Совместимость нужно проверить в вашей версии приложения.")));
+ send<void>(a,"setInformativeText:",str(T("The original .app is not modified. AppDeck creates profile folders, not copies of the program: each profile has its own sign-in. With the Codex adapter, tokens are kept in auth.json inside the private profile folder, not in the Keychain. Claude Desktop profiles have separate session lists. Enable Local Code sessions to choose an account for an existing local conversation. Check compatibility with your app version.","Исходное .app не изменяется. Создаются папки профилей, а не копии программы: у каждого профиля свой вход. В адаптере Codex токены хранятся в auth.json внутри закрытой папки профиля, не в Keychain. У профилей Claude Desktop раздельные списки сессий. Включите локальные сессии Code, чтобы выбирать аккаунт для существующей переписки. Совместимость зависит от версии приложения.")));
  Obj accessory=send(send((Obj)deckViewClass,"alloc"),"initWithFrame:",rect(0,0,430,104));
  label(accessory,T("Adapter","Адаптер"),rect(0,6,115,20));
  const char* choices[]={"Codex","VS Code / Cursor","Chromium / Chrome / Edge",T("Electron (experimental)","Electron (экспериментальный)"),"Claude Desktop",T("Ordinary launch (no profiles)","Обычный запуск (без профилей)")};
@@ -551,6 +592,7 @@ void chooseApplication(Obj,Sel,Obj){
 }
 void newProfileAction(Obj,Sel,Obj){Obj a=currentApp();if(!a){chooseApplication(nullptr,nullptr,nullptr);return;}
  if(isStandalone(a))return;
+ if(claudeGroup(a)){newClaudeProfileDialog(a,str(T("New account","Новый аккаунт")),(Int)count(profiles),nullptr);return;}
  Obj name=prompt(T("New profile","Новый профиль"),T("The account starts empty. Sign in after launching it.","Аккаунт будет пустым. Войдите в него после запуска."),str(T("New account","Новый аккаунт")));if(!name)return;
  newProfile(a,name,(Int)count(profiles),deck::adapter(utf8(get(a,"adapter")))==deck::Adapter::Codex);page=0;save();buildUI();buildMenus();}
 void selectAppAction(Obj,Sel,Obj sender){Int n=send<Int>(sender,"tag");if(n<0||(UInt)n>=count(apps))return;drop(selected);selected=keep(get(at(apps,n),"id"));page=0;save();buildUI();buildMenus();}
@@ -702,6 +744,7 @@ void makeCard(Obj parent,Obj p,Rect frame,Int ordinal){
  Obj accountLabel=cardFact(c,T("ACCOUNT","АККАУНТ"),accountText,20,half);
  if(codex){cardFact(c,T("SETTINGS","НАСТРОЙКИ"),master?T("Original","Оригинал"):truth(get(p,"share"))?T("From base","Из базы"):T("Local","Локальные"),x2,sub);
   cardFact(c,T("HISTORY","ИСТОРИЯ"),master?T("Original","Оригинал"):sharesHistory(p)?T("Shared","Общая"):T("Own","Своя"),x2+sub+16,sub);}
+ else if(claudeGroup(a)){cardFact(c,T("MODE","РЕЖИМ"),master?T("Original","Оригинал"):claudeCleanProfile(p)?T("Clean","Чистый"):T("Standard","Обычный"),x2,sub);cardFact(c,T("BRIDGE","ОБМЕН"),claudeCleanProfile(p)?T("Excluded","Выключен"):truth(get(a,"claudeSessionBridge"))?T("On","Включён"):T("Off","Выключен"),x2+sub+16,sub);}
  else{cardFact(c,T("DATA","ДАННЫЕ"),master?T("Original","Оригинал"):T("Own folder","Своя папка"),x2,sub);cardFact(c,T("ADAPTER","АДАПТЕР"),adapterTitle(a),x2+sub+16,sub);}
  send<void>(accountLabel,"setLineBreakMode:",(Int)5);if(limits)put(ref,"account",accountLabel);
  if(limits)put(ref,"usage",usageStrip(c,20,148,inner,profileIndex(p)));
@@ -776,9 +819,10 @@ void buildStandalonePage(double x,double w,double footY,Obj a){
  else lines(rootView,T("Launch the app with its usual settings and existing sign-in.\nChoose a proxy here if needed; some apps require setup in their own connection settings.\nIf you set up a proxy manually in the app, turn it off there to use a direct connection.","Приложение запускается с обычными настройками и текущим входом.\nПри необходимости выберите прокси; некоторым приложениям нужна настройка в их параметрах подключения.\nЕсли настраивали прокси внутри приложения вручную, отключите его там для прямого подключения."),rect(x,438,w,76),12,muted(),20);
  footerNote(x,footY,w,"app",str(T("Existing app data · no separate profiles","Существующие данные приложения · без отдельных профилей")));
 }
+#include "claude_session_views.hpp"
 void buildUI(){
  if(!rootView||building)return;building=true;
- Obj old=send(send(rootView,"subviews"),"copy");for(UInt i=0;i<count(old);++i)send<void>(at(old,i),"removeFromSuperview");drop(old);send<void>(cardRefs,"removeAllObjects");footer=nullptr;usageFooter=nullptr;
+ claudeStatusLabel=nullptr;Obj old=send(send(rootView,"subviews"),"copy");for(UInt i=0;i<count(old);++i)send<void>(at(old,i),"removeFromSuperview");drop(old);send<void>(cardRefs,"removeAllObjects");footer=nullptr;usageFooter=nullptr;
  Rect bounds=getRect(rootView,"bounds");double W=bounds.size.width,H=bounds.size.height;
  // Content column: one left edge L and one right edge R for every block of every page.
  const double x=264,w=W-x-32,footY=H-56;
@@ -789,7 +833,7 @@ void buildUI(){
   send<void>(l,"setShadowColor:",send(color(0,0,0,1),"CGColor"));send<void>(l,"setShadowOpacity:",(float).18);send<void>(l,"setShadowRadius:",12.0);send<void>(l,"setShadowOffset:",Extent{0,-8});
   panel(pane,rect(14,0,196,1),fill(.07),0);}
  kern(label(rootView,"AppDeck",rect(26,56,190,22),17,ink(),.4),-.17);label(rootView,T("One place. Many accounts.","Одно место. Разные аккаунты."),rect(26,78,190,14),11,faint(),0);
- const char* navTitles[]={isStandalone(currentApp())?T("Application","Приложение"):T("Profiles","Профили"),T("Shared settings","Общие настройки"),T("Projects","Проекты"),T("Proxy","Прокси"),T("About","О приложении")};const char* navIcons[]={"person.2","slider.horizontal.3","folder","network","info.circle"};
+ const char* navTitles[]={isStandalone(currentApp())?T("Application","Приложение"):T("Profiles","Профили"),T("Shared settings","Общие настройки"),claudeGroup(currentApp())?T("Code sessions","Сессии Code"):T("Projects","Проекты"),T("Proxy","Прокси"),T("About","О приложении")};const char* navIcons[]={"person.2","slider.horizontal.3","folder","network","info.circle"};
  for(Int i=0;i<5;++i){Obj b=navRow(rootView,rect(16,112+i*34,208,32),symbol(navIcons[i],13),true,str(navTitles[i]),"changePage:",i,page==i);if(page==i)send<void>(b,"setAccessibilitySelected:",true);}
  caption(rootView,T("APPS","ПРИЛОЖЕНИЯ"),rect(26,298,190,14));
  double listTop=318,listH=count(apps)*34.0,listMax=H-listTop-150;if(listMax<68)listMax=68;if(listH>listMax)listH=listMax;
@@ -838,13 +882,17 @@ void buildUI(){
   bool codexSettings=codexGroup&&!usageIsClaude(a);
   const char* eyebrow=T("SHARED WORKSPACE","ОБЩАЯ РАБОЧАЯ СРЕДА");Obj title=str(T("One workspace, separate sign-ins","Одна среда, разные входы"));
   if(usageIsClaude(a)){bool limitsOn=usageEnabled(a);
-   pageHeader(x,w,eyebrow,title,str(T("Claude Desktop: each profile has its own data folder and sign-in; the settings and history of the Code tab (~/.claude) are shared.","Claude Desktop: у каждого профиля своя папка данных и свой вход; настройки и история вкладки Code (~/.claude) общие.")));
+   pageHeader(x,w,eyebrow,title,str(T("Claude Desktop has separate sign-ins and session lists. Local Code sessions can be continued in a chosen profile.","В Claude Desktop раздельные входы и списки сессий. Локальные сессии Code можно продолжать в выбранном профиле.")));
    caption(rootView,T("ACCOUNT LIMITS","ЛИМИТЫ АККАУНТОВ"),rect(x,138,w,14));
    Obj box=card(rootView,rect(x,160,w,settingRowH),16);
    double bw=groupWidth({T("Turn off","Отключить"),T("Turn on…","Включить…")},false);
    Obj t=settingRow(box,0,w,"gauge.with.dots.needle.33percent",T("Account limits","Лимиты аккаунтов"),str(limitsOn?T("On · 5 hours, week and weekly per-model limits (for example Fable)","Включено · 5 часов, неделя и недельные лимиты по моделям (например, Fable)"):!usageBinary(a)?T("Claude Code (claude) not found — limits need it","Не найден Claude Code (claude) — без него лимиты недоступны"):T("Off · AppDeck does not run Claude Code","Выключено · AppDeck не запускает Claude Code")),limitsOn?T("Turn off","Отключить"):T("Turn on…","Включить…"),"toggleUsage:",-1,bw);
    if(!limitsOn&&!usageBinary(a))disable(t);
    lines(rootView,T("Claude Desktop hands its sign-in to the embedded Claude Code in memory, so there is nothing to ask for limits “on behalf of the window”. For each profile AppDeck keeps a separate Claude Code folder (in AppDeck's data, not ~/.claude); you sign in to it once with the same account using the standard claude auth login.\nAnthropic counts limits per account, so the numbers match the Claude window. Claude Code keeps the tokens; AppDeck never sees them and makes no network requests itself.","Claude Desktop передаёт свой вход встроенному Claude Code в памяти, поэтому спросить лимиты «от имени окна» нечем. Для каждого профиля AppDeck держит отдельную служебную папку Claude Code (в данных AppDeck, не ~/.claude); вы один раз входите в неё тем же аккаунтом через штатный claude auth login.\nЛимиты у Anthropic считаются на аккаунт, поэтому цифры совпадают с окном Claude. Токены хранит Claude Code; AppDeck их не видит и в сеть сам не ходит."),rect(x,236,w,110),12,muted(),18);
+   caption(rootView,T("LOCAL CODE SESSIONS","ЛОКАЛЬНЫЕ СЕССИИ CODE"),rect(x,368,w,14));
+   Obj bridge=card(rootView,rect(x,390,w,settingRowH),16);bool bridgeOn=truth(get(a,"claudeSessionBridge"));
+   settingRow(bridge,0,w,"bubble.left.and.bubble.right",T("Session bridge","Общие сессии"),str(bridgeOn?T("On · choose an account from Code sessions","Включено · выбирайте аккаунт в сессиях Code"):T("Off · each Desktop list stays independent","Выключено · списки Desktop раздельные")),bridgeOn?T("Turn off","Отключить"):T("Turn on…","Включить…"),"claudeBridgeToggle:",-1,bw);
+   lines(rootView,T("Clean Desktop profiles never join the session bridge. Global Claude Code settings remain shared. Choose the mode when creating a new profile.","Чистые профили Desktop не участвуют в обмене сессиями. Глобальные настройки Claude Code остаются общими. Режим выбирается при создании профиля."),rect(x,462,w,48),12,muted(),18);
    footerNote(x,footY,w,"lock.shield",str(T("Each account’s sign-in and data stay separate.","Вход и данные каждого аккаунта остаются раздельными.")));}
   else if(!codexSettings){pageHeader(x,w,eyebrow,title,nullptr);
    Obj box=card(rootView,rect(x,138,w,72),16);iconTile(box,rect(16,20,32,32),"hand.point.left");
@@ -873,6 +921,8 @@ void buildUI(){
    for(auto& act:acts){double abw=fitWidth(act.title,true);right-=abw;button(rootView,act.title,act.action,rect(right,footY,abw,32),-1,false,act.icon);right-=8;}
    footerNote(x,footY,right-x-8,"lock.shield",history?(get(a,"syncStatus")?get(a,"syncStatus"):str(T("Reconciled before launch; running windows update after a restart","Согласование перед запуском; работающие окна обновятся после перезапуска"))):str(T("Each account’s sign-in and data stay separate.","Вход и данные каждого аккаунта остаются раздельными.")));
   }
+ }else if(page==2&&claudeGroup(a)){
+  buildClaudeSessionsPage(x,w,footY);
  }else if(page==2){
   double titleW=headerButtons(x+w,{{T("Add folder","Добавить папку"),"addProject:","plus",true,nullptr}})-x-16;
   pageHeader(x,w,T("ONE LIST OF FOLDERS","ЕДИНЫЙ СПИСОК ПАПОК"),str(T("Projects","Проекты")),str(T("Shared projects are reconciled between profiles before launch. Removing one from the list keeps its folders and tasks.","Общие проекты согласуются между профилями перед запуском. Удаление из списка сохраняет папки и задачи.")));(void)titleW;
@@ -964,7 +1014,7 @@ void buildMenus(){
  }
 }
 bool flipped(Obj,Sel){return true;}
-void tick(Obj,Sel,Obj){Pool pool;proxyReap();if(adoptRunning())save();restartPump();groupSyncPump(false);usagePump();refresh();}
+void tick(Obj,Sel,Obj){Pool pool;proxyReap();claudeReapLaunches();if(adoptRunning())save();restartPump();groupSyncPump(false);claudeSessionPump();usagePump();refresh();}
 void resizeWindow(Obj,Sel,Obj){buildUI();}
 void finishedLaunching(Obj,Sel,Obj){installHotkeys();showWindowAction(nullptr,nullptr,nullptr);
  for(UInt i=0;i<count(apps);++i){Obj a=at(apps,i);if(!usageCapable(a)||get(a,"usageLimits")||!usageBinary(a))continue;
@@ -1031,6 +1081,7 @@ void renderPreview(Obj dir){
  Obj e=nullptr;send<bool>(fileManager,"createDirectoryAtPath:withIntermediateDirectories:attributes:error:",dir,true,(Obj)nullptr,&e);
  const char* names[]={"page-profiles.png","page-shared.png","page-projects.png","page-proxy.png","page-about.png"};
  for(Int i=0;i<5;++i){page=i;buildUI();send<void>(rootView,"layoutSubtreeIfNeeded");renderView(rootView,join(dir,names[i]));}
+ if(claudeGroup(currentApp())){Obj field=nullptr,mode=nullptr,form=claudeProfileForm(str(T("New account","Новый аккаунт")),&field,&mode);send<void>(rootView,"addSubview:",form);send<void>(form,"layoutSubtreeIfNeeded");renderView(form,join(dir,"claude-new-profile.png"));send<void>(mode,"selectItemAtIndex:",(Int)1);renderView(form,join(dir,"claude-new-profile-shared.png"));send<void>(form,"removeFromSuperview");drop(form);}
  ensureEdge();drop(edgeScreen);edgeScreen=keep(send(cls("NSScreen"),"mainScreen"));edgeLayout();edgeProgress=1;
  send<void>(send(edgeShade,"layer"),"setBackgroundColor:",send(color(.11,.11,.12),"CGColor"));
  edgeWanted=true;edgeRebuild=true;edgeRefresh();renderEdge();edgeWanted=false;send<void>(edgeEffect,"layoutSubtreeIfNeeded");renderView(edgeEffect,join(dir,"edge-dock.png"));
@@ -1052,6 +1103,7 @@ void registerClasses(){
  {"toggleShare:",shareAction},{"profileError:",profileErrorAction},{"changePage:",pageAction},{"showWindow:",showWindowAction},{"launchAll:",launchAllAction},{"changePath:",changePathAction},{"removeApp:",removeAppAction},
  {"openSharedFolder:",openSharedFolder},{"openSharedFile:",openSharedFile},{"importSettings:",importSettings},{"openData:",openDataAction},{"addProject:",addProjectAction},
  {"projectAction:",projectAction},{"showHelp:",helpAction},{"diagnostics:",diagnosticsAction},{"tileWindows:",tileAction},{"timerTick:",tick},
+ {"claudeBridgeToggle:",claudeBridgeToggleAction},{"claudeSessionsRefresh:",claudeSessionsRefreshAction},{"claudeSessionMenu:",claudeSessionMenuAction},{"claudeSessionOpen:",claudeSessionOpenAction},
  {"toggleEdge:",toggleEdgeAction},{"edgeFocus:",edgeFocusAction},
  {"proxyAdd:",proxyAddAction},{"proxyEdit:",proxyEditAction},{"proxyRemove:",proxyRemoveAction},{"proxyCheck:",proxyCheckAction},{"proxyCheckWorker:",proxyCheckWorker},{"proxyCheckFinished:",proxyCheckFinished},
  {"proxyDefaultMenu:",proxyDefaultMenuAction},{"proxyDefaultPick:",proxyDefaultPickAction},{"profileProxy:",profileProxyAction},

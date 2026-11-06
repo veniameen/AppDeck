@@ -1,3 +1,3 @@
 /* English Info.plist strings (the same as assets/Info.plist); present so that macOS offers both localizations. */
-NSAppleEventsUsageDescription = "AppDeck asks a profile's window to reopen — the same event the Dock icon sends.";
+NSAppleEventsUsageDescription = "AppDeck asks the chosen profile to reopen its window or open a selected local Claude Code session.";
 NSHumanReadableCopyright = "© 2026 Veniamin Ryadnov · MIT License";

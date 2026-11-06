@@ -2,16 +2,22 @@
 
 All notable changes to AppDeck. Verification details for the current release are in [docs/TESTING.md](docs/TESTING.md).
 
-## Unreleased
+## 0.13.0
 
 ### Added
 
+- Claude profile creation now offers **Clean Desktop profile (no shared sessions)** by default, with **Profile with shared Code sessions** as an explicit alternative. Clean profiles start with empty Desktop data and private temporary storage, remain outside the session bridge, and can launch alongside another copy. Both modes retain the macOS user's normal Code settings and transcripts in `~/.claude`. Existing profiles retain their previous mode; duplication opens the same choice.
 - **Add app** accepts any installed macOS `.app`, including AnyDesk. Apps without a profile adapter get one launch card using their existing data, with no profile folders. Supported apps also offer **Ordinary launch (no profiles)**.
 - Ordinary app cards offer an optional proxy and **Copy address** for applications that need proxy setup in their own settings. The address belongs to the local bridge and changes on each launch. Native apps receive proxy environment settings without Chromium switches; routing depends on the app and is not verified.
+- Opt-in local Claude Code session bridge: a shared catalogue grouped by project, **Open in…** account selection, Claude-owned registration through a pid-addressed native resume event, and registration evidence from target descriptors rather than an assumed success after delivery. Persistent process reservations conservatively prevent a different shared-Code profile launch through AppDeck while the shared conversation is open. Clean profiles neither publish nor receive bridged sessions and do not inherit that reservation. Cloud Chat, Cowork and schedules remain separate.
+- Portable bridge policies and offline macOS production scanner/reservation/event-construction fixtures for both architectures. No vendor executable or GUI is needed for these fixtures.
 
 ### Fixed
 
+- Claude launches preserve the real macOS home so Security can use the normal login Keychain. Changing `HOME` prevented a fresh Desktop window from opening. Clean mode separates Desktop data; it does not isolate the global Code environment or reset macOS permissions.
 - **Launch** no longer mistakes AnyDesk's background service for its application window. AppDeck selects the main application process, starts it when only background workers exist, and keeps multiple eligible application instances ambiguous. Native processes without a LaunchServices launch date use the public kernel birth timestamp for identity; an unavailable identity now reports a launch error instead of returning silently.
+- Corrected the claim that sharing `~/.claude` shares Claude Desktop's session lists. The native Desktop registry is separate and account-scoped. Additional Claude profiles launch the unchanged app executable with an exact environment, removing inherited Claude/Anthropic and Codex/OpenAI overrides, including `CLAUDE_CONFIG_DIR`. This prevents LaunchServices from restoring inherited values or an empty override from redirecting Code configuration. AppDeck does not choose a Desktop `CLAUDE_CONFIG_DIR`.
+- Native resume is gated to inspected Claude Desktop 2.31226.1; unknown versions remain available for ordinary launches but do not receive an import request. Real multi-account import, Automation permission and visual acceptance remain unverified; see the verification status.
 
 ## 0.12.1
 

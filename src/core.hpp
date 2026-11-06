@@ -16,7 +16,7 @@ inline bool supportsProfiles(Adapter a){return a==Adapter::Codex||a==Adapter::VS
 inline bool proxyUsesChromiumFlags(Adapter a){return supportsProfiles(a);}
 inline Adapter detect(const char* bundle,const char* name,bool electron){
  if(equal(bundle,"com.openai.codex")||equal(bundle,"com.openai.codex.desktop")||equal(name,"Codex"))return Adapter::Codex;
- // Claude Desktop honours CLAUDE_USER_DATA_DIR (its own switch for the Electron user-data folder).
+ // Claude has its own adapter; current builds use Chromium's --user-data-dir.
  if(equal(bundle,"com.anthropic.claudefordesktop"))return Adapter::Claude;
  if(prefix(bundle,"com.microsoft.VSCode")||equal(bundle,"com.todesktop.230313mzl4w4u92"))return Adapter::VSCode;
  if(prefix(bundle,"com.google.Chrome")||prefix(bundle,"com.brave.Browser")||prefix(bundle,"com.microsoft.edgemac")||equal(bundle,"org.chromium.Chromium"))return Adapter::Chromium;

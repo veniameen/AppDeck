@@ -16,9 +16,20 @@ void checkGeneric(bool value,const char* detail){
  dprintf(2,"FAIL: %s\nFixture retained: %s\n",detail,utf8(fixtureRoot));exit(1);
 }
 void pumpGeneric(){send<void>(send(cls("NSRunLoop"),"currentRunLoop"),"runUntilDate:",send(cls("NSDate"),"dateWithTimeIntervalSinceNow:",.025));}
+void waitGenericRegistration(Obj r){
+ // The fixture writes its observation before NSApplication.run, and a direct pid lookup can
+ // succeed before NSWorkspace receives its launch notification. Await those raw AppKit facts,
+ // never the production candidate filter whose result the tests below are meant to verify.
+ int pid=send<int>(r,"processIdentifier");bool listed=false,ready=false;double deadline=uptimeNow()+10;
+ do{Obj all=send(workspace,"runningApplications");listed=false;
+  for(UInt i=0;i<count(all);++i)if(send<int>(at(all,i),"processIdentifier")==pid){listed=true;break;}
+  ready=listed&&send<bool>(r,"isFinishedLaunching");if(ready)break;pumpGeneric();
+ }while(uptimeNow()<deadline);
+ checkGeneric(ready,"fixture finishes AppKit launch and appears in the workspace registry before discovery checks");
+}
 bool launchGeneric(Obj p){
  // A launch regression must fail the check rather than leave a modal alert open.
- previewMode=true;bool ok=launch(p,false);previewMode=false;if(ok)save();return ok;
+ previewMode=true;bool ok=launch(p,false);previewMode=false;if(ok){waitGenericRegistration(running(p));save();}return ok;
 }
 Obj observationGeneric(Obj path){
  double deadline=uptimeNow()+10;while(!exists(path)&&uptimeNow()<deadline)pumpGeneric();
@@ -62,7 +73,7 @@ Obj startGenericTask(Obj bundle,Obj output,const char* role){
  Obj record=observationGeneric(output);Int pid=integer(get(record,"pid"));Obj r=nullptr;double deadline=uptimeNow()+10;
  Int policy=strcmp(role,"--fixture-service")==0?2:strcmp(role,"--fixture-regular")==0?0:1;
  while(uptimeNow()<deadline){r=send(cls("NSRunningApplication"),"runningApplicationWithProcessIdentifier:",(int)pid);if(r&&send(r,"bundleURL")&&send<Int>(r,"activationPolicy")==policy)break;pumpGeneric();}
- checkGeneric(r&&send(r,"bundleURL")&&send<Int>(r,"activationPolicy")==policy,"direct native fixture is registered with its expected activation policy");return task;
+ checkGeneric(r&&send(r,"bundleURL")&&send<Int>(r,"activationPolicy")==policy,"direct native fixture is registered with its expected activation policy");waitGenericRegistration(r);return task;
 }
 Obj runningGenericTask(Obj task){return send(cls("NSRunningApplication"),"runningApplicationWithProcessIdentifier:",send<int>(task,"processIdentifier"));}
 void stopGenericTask(Obj task){
@@ -148,6 +159,7 @@ int main(int argc,char** argv){
  send<void>(externalConfig,"setObject:forKey:",externalEnv,publicConstant(appKit,"NSWorkspaceLaunchConfigurationEnvironment"));
  fixtureProcess=keep(send(workspace,"launchApplicationAtURL:options:configuration:error:",url(bundle),(UInt)(1UL<<9),externalConfig,&error));
  checkGeneric(fixtureProcess!=nullptr,"relaunch the scratch app independently of the manager");
+ waitGenericRegistration(fixtureProcess);
  checkGeneric(adoptRunning()&&integer(get(p,"pid"))==send<int>(fixtureProcess,"processIdentifier"),"status discovery adopts an externally relaunched native application");
  checkGeneric(!get(p,"proxyUsed")&&!get(p,"proxyPort")&&!proxyLocalAddress(p),"external relaunch clears the prior process's proxy name and endpoint");stopGeneric(p);
 

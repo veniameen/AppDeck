@@ -7,7 +7,7 @@
 **Several accounts of the same Mac app, side by side — one window per account, one shared workspace.**
 
 [![CI](https://github.com/veniameen/AppDeck/actions/workflows/ci.yml/badge.svg)](https://github.com/veniameen/AppDeck/actions/workflows/ci.yml)
-[![Version 0.12.1](https://img.shields.io/badge/version-0.12.1-222222)](CHANGELOG.md)
+[![Version 0.13.0](https://img.shields.io/badge/version-0.13.0-222222)](CHANGELOG.md)
 ![macOS 13+](https://img.shields.io/badge/macOS-13%2B-111111?logo=apple)
 ![Universal](https://img.shields.io/badge/Apple%20Silicon%20%2B%20Intel-universal-555555)
 ![C++17 · AppKit](https://img.shields.io/badge/C%2B%2B17-AppKit-00599C?logo=cplusplus)
@@ -19,13 +19,15 @@
 
 AppDeck is a small native macOS app for people who work in the same desktop app under several accounts — typically [Codex](https://openai.com/codex/) (`ChatGPT.app`) or [Claude Desktop](https://claude.ai/download) with a personal and a work subscription. Every profile is an ordinary window of the original app with its own sign-in. AppDeck launches them, keeps their data apart, shows how much of each account's usage limit is left and lets you switch between them from anywhere.
 
-**New in 0.12:** a proxy per profile or for all of them — HTTP or SOCKS5 with a login, through a private local bridge — and a simpler Add app dialog. See the [changelog](CHANGELOG.md).
+**New in 0.13:** launch any installed `.app`, and choose a clean Claude Desktop profile outside the session bridge or a profile that can share selected Code sessions. An optional, version-gated local Code session bridge is available to shared-mode profiles; live multi-account bridge acceptance is still pending. See the [changelog](CHANGELOG.md) and [verification status](docs/TESTING.md).
 
 ## Features
 
 - **Any installed app.** Add a macOS `.app`, including AnyDesk, and launch it with its existing data. Apps without a profile adapter get one ordinary launch card, with an optional proxy; applications that require manual proxy setup can use the card's local proxy address.
 - **One card per account.** The app's icon with the profile's colour badge, the signed-in account and its plan, a status light, and the usage limits with their reset times. **Launch** starts the profile; a running one offers **Show window**, **Restart** and **Close** (a normal quit request, never a force kill).
 - **Separate sign-ins, shared work.** Each profile gets its own private data folder, so every window stays signed in to its own account. For Codex you can share settings, chat history, projects and automations between the accounts — without copying a single database or token.
+- **Clean Claude Desktop profiles.** **New profile** defaults to empty Desktop data with no session-bridge participation, ready to launch alongside another copy. Choose **Profile with shared Code sessions** for the earlier behavior. Both modes keep the usual global Code settings and transcripts in `~/.claude`; macOS permissions and Keychain remain tied to your macOS account. Existing profiles are preserved.
+- **Local Claude Code sessions.** Find saved Desktop conversations by project and choose a shared-mode profile to continue one. Clean profiles stay outside the bridge. Claude creates its own session entry; AppDeck preserves account storage and does not copy transcripts. Other Desktop instances must be closed for a shared session. Currently gated to inspected Claude Desktop 2.31226.1; real import remains an acceptance check.
 - **Usage limits at a glance.** The weekly, 5-hour and per-model windows of every Codex and Claude account, asked from the apps' own tools. Meters stay neutral while there is room, turn amber below 25 % and red below 10 %; the account with the most headroom stands out in the side panel.
 - **Side panel.** Press <kbd>⌃</kbd><kbd>⌥</kbd><kbd>Space</kbd> in any app and switch accounts without opening the main window.
 - **Proxy per profile.** Start any profile through an HTTP or SOCKS5 proxy with a login and password — for example past the VPN of your router. Set a default for all profiles or choose one per profile; a private local bridge adds the credentials, fails over along your address list and keeps QUIC and WebRTC inside the proxy.
@@ -64,7 +66,7 @@ The panel never becomes the key window and never records the screen: rows show p
 | App | What a profile gets | Extras |
 |---|---|---|
 | Codex (`ChatGPT.app`) | Its own `CODEX_HOME`, Electron user data and sign-in | Shared settings, history, projects and automations (opt-in); usage limits |
-| Claude Desktop | Its own `CLAUDE_USER_DATA_DIR` and sign-in | Usage limits through a Claude Code sign-in |
+| Claude Desktop | Its own Desktop data; global Code settings remain in the usual `~/.claude` | Usage limits; optional session bridge outside clean mode |
 | VS Code, Cursor | Its own user data and extensions folder | — |
 | Chrome, Brave, Edge, Chromium | Its own browser profile folder | — |
 | Other Electron apps | Its own user data folder (experimental) | — |
@@ -111,7 +113,7 @@ The shortcuts are registered hot keys: no Input Monitoring permission is needed.
 
 ## Privacy and safety
 
-- AppDeck never copies, links or edits the managed apps' databases and never reads or shares `auth.json`, cookies or Keychain items. Sign-ins stay in each profile's private folder.
+- AppDeck never copies, links or edits the managed apps' databases and never reads or shares `auth.json`, cookies or Keychain items. Desktop data stays in each profile's private folder; vendor use of the macOS Keychain remains OS-scoped.
 - It has no network client of its own. Codex limits come from the app's own `codex app-server` (`account/read`, `account/rateLimits/read`); Claude limits from Claude Code's `get_usage` request in `--safe-mode`, which sends no message to the model. AppDeck never sees a token.
 - A proxy is opt-in: its passwords stay in a private file (mode 0600) and reach the local bridge through a pipe; the bridge listens on `127.0.0.1` only and exits with the window it serves.
 - Limits are asked rarely: each account at most once an hour, with at least five minutes between two accounts; **Limits** asks now.

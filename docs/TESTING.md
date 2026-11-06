@@ -6,8 +6,10 @@ AppDeck manages other apps' windows and account data, so most of its behaviour c
 
 | Command | Covers |
 |---|---|
-| `make test` | The localization check (`tools/check_i18n.py`) and seven portable policy suites built with AddressSanitizer and UndefinedBehaviorSanitizer: `core_test` (adapters, the conservative `config.toml` editor), `edge_test` (side panel geometry, visible rows, scrolling, drop places, auto-scroll, clean-at-rest edges, the 2×2 grid, allow-lists), `workspace_filter_test`, `usage_test` (reply parsing and a simulated day of limit polling), `proxy_test` (address lines, Basic credentials, CONNECT, request rewriting, SOCKS5 messages), `project_sync_test`, `automation_sync_test`. Pure C++17; this is what CI runs. |
-| `make verify` | `make app` and `make test`, then: the static bundle check (`tools/verify_bundle.py`); the project adapter against an offline protocol fixture and — when `ChatGPT.app` is installed — against Codex's real `app-server` with scratch profiles; the production group synchronizer (`group_sync_test`); the macOS API smoke test (selectors, struct ABI, `sysctl` argv recovery); a real signed-out `get_usage` exchange with Claude Code when it is installed; and the regression for the 0.2.0 crash inside a separate, untrusted app bundle. |
+| `make test` | The localization check and eight portable ASan/UBSan policy suites: core, edge, workspace filter, usage, proxy, project sync, automation sync and Claude session policy (metadata allowlist, version gate, path/URL validation, capacity bounds and ownership admission). Pure C++17; this is what CI runs. |
+| `make test-claude-sessions` | Offline macOS fixtures on arm64 and x86_64/Rosetta with ASan/UBSan: the production Claude metadata scanner, sanitized catalogue, conflicts, native-registration evidence, durable reservations, malformed input and link/size/budget protection. Constructs pid-addressed Apple events without sending them. Does not run NSApplication, Claude, any vendor helper or any real profile. |
+| `make test-claude-profiles` | Production Claude launch and storage preparation against disposable native fixture applications on arm64 and x86_64/Rosetta, with ASan/UBSan. Checks clean and shared-session modes, exact environment and working directory, concurrent child identities, restart/adoption, persisted mode, bridge exclusion and private-directory protections. Does not launch real Claude or use a real account. |
+| `make verify` | `make app`, `make test`, the offline Claude session fixtures and native clean-profile fixtures, then: the static bundle check (`tools/verify_bundle.py`); native ordinary-app launch/adoption and proxy-lifecycle fixtures on both architectures; the project adapter against an offline protocol fixture and — when `ChatGPT.app` is installed — against Codex's real `app-server` with scratch profiles; the production group synchronizer (`group_sync_test`); the macOS API smoke test (selectors, struct ABI, `sysctl` argv recovery); a real signed-out `get_usage` exchange with Claude Code when it is installed; and the regression for the 0.2.0 crash inside a separate, untrusted app bundle. |
 | `tests/proxy_bridge_test.sh build/AppDeck.app` | Part of `make verify` and CI, right after the static bundle check (about 70 s). The proxy bridge (`Contents/MacOS/appdeck-proxy`) against offline loopback fixtures (`tests/proxy_fixture.py`): plain and CONNECT requests through an HTTP upstream with Basic auth and a SOCKS5 upstream with a login (names, IPv4, IPv6); failover past a dead port, a wrong login (407) and a silent upstream, for tunnels and for plain requests (a POST is never sent twice); 502 when no upstream works; `check` results (`ok`, `auth`, and `fail … protocol` when a SOCKS greeting is answered in another protocol); lifecycle (serves without a deadline until `watch` or end of stdin, exits with the watched process); loopback-only listening; 8 MiB transfers byte-exact; 50 parallel requests; no credential in argv, stdout or stderr. |
 | `APPDECK_GUI_SELFTEST=1 make verify` | Additionally the side panel self-test for arm64 and x86_64 (Rosetta), in English and Russian. It shows a sandbox panel for about 20 seconds per run. |
 
@@ -28,11 +30,37 @@ No check signs in to an account, sends a model turn or opens a real profile's da
 
 Why the self-test replays events inside the app: on macOS 26 mouse events posted to another process (`CGEventPostToPid`) are dropped, and posting to the system event stream would move the user's pointer. The self-test therefore covers everything from `-[NSApplication sendEvent:]` on; a real pointer or trackpad gesture is part of the manual checklist.
 
-## Unreleased: ordinary application launch
+## Status of 0.13.0
+
+0.13.0 combines ordinary application launch support, a clean/shared-session choice for new Claude Desktop profiles, and an opt-in Claude local Code session bridge. It also corrects the earlier claim that a shared `~/.claude` automatically shares Desktop sidebars. The native resume handler was inspected statically in installed Claude Desktop 2.31226.1 and is gated to that exact version.
+
+### Current clean-profile verification
+
+The final clean Desktop implementation passed `APPDECK_GUI_SELFTEST=1 make verify` on this Mac (exit 0; `build/final-verification-0.13.0.log`), together with real-app and visual acceptance:
+
+- Real Claude Desktop 4.4212.0: two disposable profiles launched through the exact production path, without environment postprocessing, alongside the user's already-running Claude. Screenshots of each exact test PID showed the untouched Claude for Mac welcome screen and initial Cookie settings dialog. Each had a different process and private user-data folder; the existing Claude remained running. No onboarding button was clicked, no account was signed in and no model turn was sent. Both test processes quit normally and their temporary data was removed. Evidence: `build/claude-final-onboarding.json` and its window screenshots.
+- Native profile fixtures: 133 assertions on each of arm64 and x86_64/Rosetta with ASan/UBSan. The child retains its original scratch `HOME`, has no `CLAUDE_CONFIG_DIR` or `CFFIXED_USER_HOME`, persists its own Desktop data, and leaves the shared global-Code sentinel unchanged. Clean profiles stay outside the bridge; standard profiles retain their earlier behavior.
+- Final dialog screenshots in English and Russian: both mode choices and all explanatory text fit. The Russian global-Code note wraps to two lines. Native popup controls are not drawn reliably by the separate `cacheDisplay` render path; actual window screenshots were used for this review.
+- Localization: 793 English/Russian pairs. Portable ASan/UBSan suites: core 301, edge 485 417, workspace filter 68, usage 1 469, proxy 157, project sync 44, automation sync 80 and Claude session policy 216 assertions. Native Claude session scanner/reservation fixtures passed 99 assertions per architecture. The final universal build, system ad-hoc signature verification and static bundle checks passed.
+- Final integration checks: 142 ordinary-app assertions per architecture, 76 offline proxy checks, Codex project protocol and native vendor-helper fixtures, 190 production group-sync assertions, signed-out Claude Code safe-mode `get_usage`, API smoke tests and the untrusted-bundle Accessibility regression. The ordinary-app fixture waits for raw NSWorkspace membership and `isFinishedLaunching` before its unchanged candidate assertions, removing a fixture startup race without changing production launch behavior.
+- Side panel: 17 checks for each of arm64/English, arm64/Russian, x86_64/English and x86_64/Russian.
+- The packaged ZIP was extracted and checked with system `codesign --verify --deep --strict`; its contents matched the final build. Signing is local ad hoc, without Developer ID signing or notarization.
+
+Claude preserves real `HOME` so macOS Security can use the normal login Keychain; redirecting it blocked first-run startup. AppDeck does not set `CFFIXED_USER_HOME` or `CLAUDE_CONFIG_DIR`. Global Code settings and transcripts remain in the normal user's `~/.claude`; the verified result is fresh Desktop onboarding, not a fresh macOS identity or isolated CLI configuration.
+
+Static inspection confirmed that signed Claude Desktop 4.4212.0 ignores the legacy `CLAUDE_USER_DATA_DIR` override. Desktop storage uses `--user-data-dir`; additional profiles launch the unchanged executable through `NSTask` with an exact environment and the mode-specific working directory. The local-session import gate remains restricted to 2.31226.1. Real-account sign-in, separate account use after onboarding, and multi-account Code conversations remain unverified.
+
+### Prior Claude bridge checks
+
+Before integration with ordinary application launch support, bridge verification was deliberately offline: portable policy/localization suites, production scanner/reservation/event-construction fixtures for both architectures with ASan/UBSan, a universal warnings-as-errors build, system `codesign` and the static bundle checker. Those checks did not launch a managed application or the AppDeck GUI, modify a real profile, or replace the installed AppDeck bundle. That earlier verification did not run `make verify`, which launches vendor helpers and a GUI regression app. The panel implementation was unchanged.
+
+Not verified for the new bridge: delivery to one selected real Claude instance, macOS Automation permission, sign-in and current-account changes, native Code sidebar registration and continued conversation under a second real account, imported trust/permission behavior, interface renders in both languages, and external CLI/Desktop writers. The Chrome extension's relocation restriction is not fixed by this feature. The handler may change after a Claude update; unknown versions disable import. Offline success is not a claim that these live checks passed.
+
+### Prior ordinary-application checks
 
 Unknown native `.app` bundles now register as ordinary applications with one launch entry and no profile data folders. Known adapters can also select ordinary launch. Proxy delivery is environment-only for ordinary apps, with a copyable loopback address for manual setup.
 
-Verified on this Mac:
+Before integration with the Claude changes, verified on this Mac:
 
 - `make test`: 706 localized English/Russian pairs; core 301, edge 485 417, workspace filter 68, usage 1 469, proxy 157, project sync 44 and automation sync 80 assertions with ASan/UBSan.
 - `make verify` passed after the AnyDesk launch fix: universal build and system ad-hoc signing checks, static bundle verification, 76 offline proxy-bridge checks, both native generic-app runners, the offline project protocol fixture, API/AX smoke tests and signed-out Claude Code `get_usage`. Native Codex project/group fixtures were skipped because no vendor helper was available at the verifier's default paths. The preceding UI revision also passed `APPDECK_GUI_SELFTEST=1 make verify`, including 17 side-panel checks for each architecture/language combination; the launch fix does not change the panel UI.
@@ -41,9 +69,9 @@ Verified on this Mac:
 - Main-window renders in English and Russian reviewed for the ordinary-app card and its manual-proxy instructions.
 - Proxy acceptance now waits for its refusing HTTP fixture to consume 64 KiB before returning 407, explicitly proving the non-replayable streaming precondition. The earlier immediate refusal raced the upload and could legitimately allow safe failover. The deterministic rejection case passed 20 isolated repetitions; the existing 8 MiB integrity cases remain unchanged.
 
-Compatibility limits: native applications may ignore proxy environment variables. The native fixture verifies configuration delivery and bridge lifetime, not the traffic route of AnyDesk or another vendor app. AnyDesk's own HTTP-proxy settings require manual host/port entry; the dynamic port changes on a new launch, and an installed background service can outlive the watched GUI process. No real AnyDesk session, account, provider proxy, Intel hardware or macOS 13–15 acceptance was performed for this change. The release version remains 0.12.1 until a release is prepared.
+Compatibility limits: native applications may ignore proxy environment variables. The native fixture verifies configuration delivery and bridge lifetime, not the traffic route of AnyDesk or another vendor app. AnyDesk's own HTTP-proxy settings require manual host/port entry; the dynamic port changes on a new launch, and an installed background service can outlive the watched GUI process. No real AnyDesk session, account, provider proxy, Intel hardware or macOS 13–15 acceptance was performed for this change.
 
-## Status of 0.12.1
+## Previous status of 0.12.1
 
 0.12.1 changes only where AppDeck looks for Codex's helper. ChatGPT 26.924 (Codex CLI 0.158.0-alpha.2.1) moved it from `Contents/Resources/codex` to `Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex`, the path its desktop code starts on macOS. Verified on macOS 26.2, Apple Silicon, with that ChatGPT build:
 
@@ -129,8 +157,15 @@ Use `APPDECK_DATA_ROOT` and a disposable test project. Back up `~/.codex` and ex
 
 ### Claude Desktop
 
-- Adding `Claude.app` preselects the Claude Desktop adapter; a copy runs as a second process with `CLAUDE_USER_DATA_DIR` and `--user-data-dir` in its profile, opens no file of `~/Library/Application Support/Claude`, and can be closed and restarted; the original keeps running.
+- Adding `Claude.app` preselects the Claude Desktop adapter. **New profile** and **Duplicate** default to clean Desktop mode and offer shared-session mode. Confirm existing profiles keep their mode after reload and cards display the saved mode in both languages.
+- Launch two disposable clean profiles while the original is running: each must have its own first-run window, user-data, working folder and temporary path, while preserving the real macOS home. Restart and manager re-adoption must return to the same profile. Confirm that both modes retain global `~/.claude` settings and transcripts. Verify sign-in and Code conversations with separate test accounts; an argument marker alone does not prove complete account isolation.
+- With inherited profile/API overrides, verify that the launched Claude child has no inherited `CLAUDE_CONFIG_DIR` or credential variables, and has the expected private or usual working directory. Verify exact-PID registration and process adoption when `launchDate` is absent.
+- Keep a shared-session reservation active, then launch a clean profile: it must remain outside the reservation, catalogue and target list. Another shared-mode profile must remain blocked. Unknown or malformed mode values must not silently migrate an existing profile.
+- Inspect compatibility with installed Claude 4.4212.0. It and the previously inspected 2.31226.1 signed build ignore the legacy `CLAUDE_USER_DATA_DIR`; the earlier build disabled Chrome-extension local pairing for relocated data. macOS permissions and Keychain identity remain OS-scoped.
 - The primary card attaches to the running original and never adopts a copy.
+- Local Code bridge: opt in, discover source conversations, open one in a second signed-in profile with every other Desktop and CLI writer closed, confirm the exact target sidebar and continued context/account. A denied pid-addressed Apple event must not open an arbitrary instance or report success.
+- Check retry, native account switch, missing transcript, conflicting cwd, archive-only records, corrupt or missing reservation, manager restart and native-process exit/restart. During ownership, AppDeck must refuse a different shared-mode profile launch while allowing clean profiles. Native metadata must be written by Claude only; cookies, permission settings, transcripts and schedules are never copied.
+- Review Code sessions and Shared settings at the minimum window size in both languages before enabling this feature in a live workflow.
 
 ## Release gate
 

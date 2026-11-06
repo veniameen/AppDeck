@@ -26,7 +26,7 @@ AppDeck runs several accounts of the same desktop app side by side on macOS — 
 ![The main window: four Codex profiles with their accounts and usage limits](images/main-window.png)
 
 1. **Add an app.** Click **Add app** in the sidebar and choose any installed macOS `.app`. AppDeck detects profile adapters for Codex (`ChatGPT.app`), Claude Desktop, VS Code / Cursor, Chromium browsers and other Electron apps. Other apps get one ordinary launch card, using their existing data. The original `.app` is never copied or modified.
-2. **Create profiles if needed.** In a supported app, each profile has its own private data folder and sign-in. Use **New profile** for more. To use the app's existing data instead, select **Ordinary launch (no profiles)** when adding it.
+2. **Create profiles if needed.** In a supported app, each profile has its own private data folder and sign-in. Use **New profile** for more; Claude offers a clean Desktop profile by default or a profile that can share selected Code sessions. To use the app's existing data instead, select **Ordinary launch (no profiles)** when adding it.
 3. **Launch and sign in.** Click **Launch** on a card and sign in inside the app window. Sign in to one new account at a time.
 4. **Switch.** Click **Show window** on a card, press **⌘1–9** while AppDeck is active, or open the [side panel](#the-side-panel) with **⌃⌥Space** from anywhere.
 
@@ -55,7 +55,7 @@ AppDeck separates **data**, not security domains: every profile runs as your mac
 | Adapter | How a profile is isolated | Shared on purpose |
 |---|---|---|
 | Codex (`ChatGPT.app`) | Own `CODEX_HOME`, `CODEX_ELECTRON_USER_DATA_PATH` and `--user-data-dir` in the profile folder | Optional: settings, history, projects and automations — see below |
-| Claude Desktop | Own `CLAUDE_USER_DATA_DIR` and `--user-data-dir` | The Code tab's `~/.claude` (AppDeck never sets `CLAUDE_CONFIG_DIR`) |
+| Claude Desktop | Own Desktop data; clean mode stays outside the session bridge | Both modes keep global Code settings and transcripts in the usual `~/.claude`; shared-session mode can use the opt-in bridge |
 | VS Code / Cursor | Own `--user-data-dir` and `--extensions-dir` | Nothing |
 | Chromium browsers | Own `--user-data-dir` | Nothing |
 | Other Electron apps | Own `--user-data-dir` (experimental) | Nothing |
@@ -137,15 +137,37 @@ Consent dialogs (limits, shared history) cannot be accepted with Return; Escape 
 
 ## Claude Desktop
 
-Add `Claude.app` with **Add app**; the Claude Desktop adapter is preselected. The checkbox **Add the existing sign-in (current window) as the primary profile** creates **Primary · current**: the ordinary Claude with its usual data, attached or launched normally. Every other profile is a new, empty sign-in.
+Add `Claude.app` with **Add app**; the Claude Desktop adapter is preselected. The checkbox **Add the existing sign-in (current window) as the primary profile** creates **Primary · current**: the ordinary Claude with its usual data, attached or launched normally.
 
-| Data | Behaviour |
-|---|---|
-| Sign-in, cookies, window settings, `claude_desktop_config.json` (MCP) | Per profile: `Profiles/<id>/user-data`, passed through Claude's own `CLAUDE_USER_DATA_DIR` and `--user-data-dir`. |
-| Code tab: settings, history, skills, memory (`~/.claude`) | Shared by all profiles — AppDeck never sets `CLAUDE_CONFIG_DIR`. |
-| The original `~/Library/Application Support/Claude` | Not opened by copies. |
-| Limits | Available through a Claude Code sign-in — see below. |
-| Shared history, project and automation sync | Codex only. |
+Click **New profile**, enter a name and choose the mode:
+
+- **Clean Desktop profile (no shared sessions)** is selected by default. It starts with empty Desktop data and separate temporary storage. You can launch it while another Claude copy is running, then sign in inside the new window. AppDeck does not scan this profile for the session bridge or import shared sessions into it.
+- **Profile with shared Code sessions** uses separate Desktop data and can participate in the optional bridge. On supported Claude versions, the bridge registers a conversation you select in another participating profile.
+
+**Both modes keep the normal global Code settings and transcripts in your macOS user's `~/.claude`.** Clean mode does not reset CLI settings, skills, memory or local transcripts. AppDeck preserves the real macOS home so Claude can use the login Keychain. macOS permissions and Keychain identity remain shared at the OS level; this is not a new macOS user or a virtual machine.
+
+The choice is saved for that profile. Existing profiles keep their earlier mode and data. **Duplicate** opens the same chooser, with clean mode selected; it creates new Desktop storage rather than copying the source account. The card displays the saved mode.
+
+| Data | Clean Desktop profile | Profile with shared Code sessions |
+|---|---|---|
+| Desktop sign-in, cookies, window settings and MCP configuration | New profile data; nothing copied | New profile data; nothing copied |
+| Global Code configuration, skills, memory and transcripts | Usual `~/.claude`, not isolated by this mode | Usual `~/.claude` |
+| Native Desktop Code session list | Own list; excluded from the bridge | Own account-scoped list; optional bridge registration |
+| Account limits | Separate Claude Code meter sign-in, described below | Separate Claude Code meter sign-in, described below |
+
+AppDeck never copies authentication data, cookies or conversations. Compatibility still depends on the installed Claude version.
+
+### Local Code sessions across accounts
+
+In a Claude group, enable **Shared settings → Session bridge** or **Code sessions → Enable local sessions**. The Code sessions page reads the local Desktop session lists, groups conversations by project folder and offers **Open in…** with the group's primary and shared-mode profiles in their existing order. Clean profiles are neither scanned nor offered as targets. **Refresh** discovers additions and title changes. Archived-only conversations are omitted; inconsistent project folders are shown but cannot be opened. An incomplete or unsupported list is reported, not treated as an empty history.
+
+Choose a profile and confirm the project folder and transfer of the local conversation context. AppDeck starts that profile only as part of this explicit action if needed, then sends Claude's own resume URL to the **exact process**, rather than opening the URL through the system-wide app handler. Claude registers the existing local transcript under its current sign-in; AppDeck never edits its session descriptors, copies transcripts, sends a model prompt, imports permissions or transfers account data. The selected conversation can then appear in that profile's native Code sidebar. This is registration on selection, not automatic replication of every native sidebar.
+
+Quit other Claude Desktop instances first, and close terminal sessions using the same conversation. AppDeck cannot determine live task activity from saved descriptors. It conservatively reserves the selected Desktop process and refuses another shared-mode Claude profile launch through AppDeck until that process exits. A clean profile can still launch because AppDeck does not import bridged sessions into it. Its global CLI configuration and transcripts are still shared; the reservation is not a lock on every external or manual Code operation. The reservation is stored in AppDeck's own Shared folder and survives a manager restart; damaged or unexpectedly missing reservations block switching. It does not control external launches or provide a vendor-wide writer lock.
+
+**Waiting for registration** means only that the open request was delivered. Success requires a new or updated native descriptor in the chosen profile with the selected transcript ID and project folder. An old descriptor is not confirmation. After 45 seconds without that evidence, AppDeck reports that registration was not confirmed; check sign-in and any Claude dialog, then retry. An uncertain delivery retains the reservation until the selected process exits.
+
+The native resume handler was inspected in **Claude Desktop 2.31226.1**. The bridge is version-gated and disabled for other builds, including the currently inspected 4.4212.0; ordinary profile launching remains available. Real multi-account import, Automation permission and the rendered interface still require live acceptance. This feature covers **local Code conversations**, not cloud Chat projects, Cowork history or scheduled tasks. Switching it off keeps all Claude data intact.
 
 ## Claude limits
 
