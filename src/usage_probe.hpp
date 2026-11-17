@@ -3,8 +3,9 @@
 // lines with it, return plain data. No AppDeck state is touched here, so the smoke test runs the very
 // same code against a scratch configuration.
 //   request: {kind:"codex"|"claude", binary, scratch (cwd), environment}
-//   result : {account:{signedIn,kind,email,plan}, limits:{windows,plan,…}, error, detail}
+//   result : {account:{signedIn,kind,email,plan,orgId}, limits:{windows,plan,…}, error}
 #include "usage_parse.hpp"
+#include "usage_cache.hpp"
 struct PollFd{int fd;short events,revents;};
 double usageUptime(){return send<double>(send(cls("NSProcessInfo"),"processInfo"),"systemUptime");}
 // Waits for readable data and appends it; false on EOF, error, full buffer or deadline.
@@ -52,7 +53,7 @@ void usageProbeCodex(Obj request,Obj result){
   else{collect(3);Obj who=get(replies,"2"),limits=get(replies,"3");
    if(who&&get(who,"result"))put(result,"account",usageAccount(get(who,"result")));
    if(limits&&get(limits,"result"))put(result,"limits",usageRecord(get(limits,"result")));
-   else if(limits&&get(limits,"error")){Obj problem=get(limits,"error");failure=usageErrorKind(problem);Obj m=usageKind(problem,"NSDictionary")?get(problem,"message"):nullptr;if(usageKind(m,"NSString"))put(result,"detail",m);}
+   else if(limits&&get(limits,"error"))failure=usageErrorKind(get(limits,"error"));
    else failure="timeout";}}
  free(buf);send<void>(writer,"closeFile");usageReap(task);if(failure)put(result,"error",str(failure));
 }
@@ -65,20 +66,30 @@ void usageProbeClaude(Obj request,Obj result,bool requireSignIn){
  const Size cap=256*1024;char* buf=(char*)calloc(cap,1);if(!buf){put(result,"error",str("error"));return;}
  Obj out=send(cls("NSPipe"),"pipe");Obj who=array();add(who,str("auth"));add(who,str("status"));Obj task=out?usageTask(request,who,nullptr,out):nullptr;
  if(!task){free(buf);put(result,"error",str("spawn"));return;}
- Size n=0;double deadline=usageUptime()+deck::usageProbeTimeout;while(usageFill(send<int>(send(out,"fileHandleForReading"),"fileDescriptor"),buf,cap,n,deadline)){}usageReap(task);
- Obj account=usageAccountClaude(usageJSON(buf,n));put(result,"account",account);if(requireSignIn&&!truth(get(account,"signedIn"))){free(buf);return;} // the caller reports "auth"
+ Size n=0;double deadline=usageUptime()+deck::usageProbeTimeout;while(usageFill(send<int>(send(out,"fileHandleForReading"),"fileDescriptor"),buf,cap,n,deadline)){}bool timedOut=usageUptime()>=deadline;usageReap(task);
+ Obj status=usageJSON(buf,n);
+ if(!status||!usageKind(get(status,"loggedIn"),"NSNumber")){const char* error=usageErrorKind(status);free(buf);put(result,"error",str(strcmp(error,"error")?error:timedOut?"timeout":"protocol"));return;}
+ if(get(status,"error")){const char* error=usageErrorKind(status);if(strcmp(error,"error")){free(buf);put(result,"error",str(error));return;}}
+ Obj account=usageAccountClaude(status);put(result,"account",account);if(requireSignIn&&!truth(get(account,"signedIn"))){free(buf);return;} // the caller reports "auth"
+ if(truth(get(account,"signedIn"))&&usageReuseCached(request,result)){free(buf);return;}
  Obj in=send(cls("NSPipe"),"pipe");out=send(cls("NSPipe"),"pipe");Obj args=array();
  for(const char* a:{"-p","--safe-mode","--input-format","stream-json","--output-format","stream-json","--verbose","--no-session-persistence"})add(args,str(a));
  task=in&&out?usageTask(request,args,in,out):nullptr;if(!task){free(buf);put(result,"error",str("spawn"));return;}
  Obj writer=send(in,"fileHandleForWriting");int wfd=send<int>(writer,"fileDescriptor"),rfd=send<int>(send(out,"fileHandleForReading"),"fileDescriptor");fcntl(wfd,73,1);
- Obj reply=nullptr;Size used=0;deadline=usageUptime()+deck::usageProbeTimeout;
+ Obj reply=nullptr;Size used=0;deadline=usageUptime()+deck::usageProbeTimeout;const char* terminalError=nullptr;
  if(usageSay(wfd,"{\"type\":\"control_request\",\"request_id\":\"appdeck-usage\",\"request\":{\"subtype\":\"get_usage\",\"skip_behaviors\":true}}\n"))
-  while(!reply){bool more=true;while(more&&!reply){Obj msg=usageLine(buf,used,more);if(msg&&usageKind(get(msg,"type"),"NSString")&&!strcmp(utf8(get(msg,"type")),"control_response"))reply=msg;}
-   if(reply||!usageFill(rfd,buf,cap,used,deadline))break;}
- send<void>(writer,"closeFile");usageReap(task);free(buf);
+  while(!reply&&!terminalError){bool more=true;while(more&&!reply&&!terminalError){Obj msg=usageLine(buf,used,more);if(!msg||!usageKind(get(msg,"type"),"NSString"))continue;
+    Obj response=get(msg,"response");if(same(get(msg,"type"),str("control_response"))&&usageKind(response,"NSDictionary")&&same(get(response,"request_id"),str("appdeck-usage")))reply=msg;
+    else if(same(get(msg,"type"),str("result"))&&((usageKind(get(msg,"is_error"),"NSNumber")&&truth(get(msg,"is_error")))||(usageKind(get(msg,"subtype"),"NSString")&&usage_error::contains(utf8(get(msg,"subtype")),"error"))))terminalError=usageErrorKind(msg);
+   }
+   if(reply||terminalError||!usageFill(rfd,buf,cap,used,deadline))break;}
+ timedOut=usageUptime()>=deadline;send<void>(writer,"closeFile");usageReap(task);free(buf);
+ if(terminalError){put(result,"error",str(terminalError));return;}
  Obj response=reply?get(reply,"response"):nullptr;
- if(!usageKind(response,"NSDictionary")){put(result,"error",str("timeout"));return;}
- if(!usageKind(get(response,"subtype"),"NSString")||strcmp(utf8(get(response,"subtype")),"success")){put(result,"error",str("unsupported"));Obj m=get(response,"error");if(usageKind(m,"NSString"))put(result,"detail",m);return;}
+ if(!usageKind(response,"NSDictionary")){put(result,"error",str(timedOut?"timeout":"protocol"));return;}
+ if(!usageKind(get(response,"subtype"),"NSString")){put(result,"error",str("protocol"));return;}
+ if(!same(get(response,"subtype"),str("success"))){put(result,"error",str(usageErrorKind(response)));return;}
+ if(!usageKind(get(response,"response"),"NSDictionary")){put(result,"error",str("protocol"));return;}
  Obj record=usageRecordClaude(get(response,"response"));put(result,"limits",record);
  if(!count(get(record,"windows")))put(result,"error",str(truth(get(record,"available"))?"nodata":"noplan"));
 }

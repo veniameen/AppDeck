@@ -2,6 +2,31 @@
 
 All notable changes to AppDeck. Verification details for the current release are in [docs/TESTING.md](docs/TESTING.md).
 
+## 0.15.3
+
+### Changed
+
+- Claude profile forms show the effective connection, name an inherited/default proxy, explain the ordinary system/router route, and update the explanation when the choice changes. Existing profile modes and network settings are not migrated.
+- Claude limit checks can reuse a recent successful quota reply after the official CLI freshly confirms the same account, organization, authentication kind and plan. Reuse is limited to ordinary system connections; proxy routes and unknown identities are checked independently. Identity metadata stays in memory and the original quota timestamp is retained.
+- Limit errors now distinguish network/proxy failures, expired sign-in, quota exhaustion, request throttling, regional restrictions, generic denial and explicit service-reported suspension. Raw vendor diagnostics are not shown. Errors remain visible alongside stale cached numbers, and expired Claude meter sign-ins offer the existing native reconnect flow.
+
+### Fixed
+
+- A slow two-stage Claude check can no longer overlap another worker after an elapsed single-process timeout.
+- Temporary Claude limit-check failures retain the profile's last good values and original timestamp on proxy routes, after repeated errors and after an AppDeck restart. Expired sign-ins and detected account, plan or organization changes still clear the old values.
+
+## 0.15.2
+
+### Changed
+
+- Clarified the existing default clean Claude profile mode: only a newly created profile starts empty; its private Desktop and Code data persist across launches and AppDeck restarts. Existing profiles retain their mode and data. Documentation distinguishes private user-level Code storage from settings in a shared project folder.
+
+## 0.15.1
+
+### Fixed
+
+- A missing, unreadable or unsupported project list in one Codex profile no longer blocks every profile in the shared group from launching. AppDeck preserves the original file and journal baseline, marks that profile's project synchronization pending, continues synchronizing supported profiles and retries before the next launch. Unavailable automation folders and duplicate schedule owners retain their launch protections.
+
 ## 0.15.0
 
 ### Added

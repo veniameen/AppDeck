@@ -33,6 +33,14 @@ int main(){
    if(pick<0)continue;check(last==0||now-last>=deck::usageSpacing);check(checked[pick]==0||now-checked[pick]>=deck::usageInterval);checked[pick]=now;last=now;++probes;}
   check(probes>=5*23&&probes<=5*24+5);} // about one probe per account per hour, never more
  check(deck::usageManualAllowed(t,0));check(!deck::usageManualAllowed(t+5,t));check(!deck::usageManualAllowed(t+19.9,t));check(deck::usageManualAllowed(t+20,t));check(deck::usageManualAllowed(t,t+10));
+ // Reusing a fetched quota is deliberately stricter than scheduling after a clock rollback.
+ check(deck::usageCacheFresh(t,t,false));check(deck::usageCacheFresh(t+3599,t,false));check(!deck::usageCacheFresh(t+3600,t,false));
+ check(deck::usageCacheFresh(t+19,t,true));check(!deck::usageCacheFresh(t+20,t,true));check(!deck::usageCacheFresh(t,t+1,false));
+ check(!deck::usageCacheFresh(t,0,false));check(!deck::usageCacheFresh(t,-1,false));
+ check(!deck::usageCacheFresh(std::numeric_limits<double>::quiet_NaN(),t,false));check(!deck::usageCacheFresh(t,std::numeric_limits<double>::quiet_NaN(),false));
+ check(!deck::usageCacheFresh(std::numeric_limits<double>::infinity(),t,false));check(!deck::usageCacheFresh(t,std::numeric_limits<double>::infinity(),false));
+ // A chain of duplicate profiles reads the original timestamp; it cannot perpetually renew it.
+ {double fetched=t;for(int i=0;i<12;++i)check(deck::usageCacheFresh(t+i*300,fetched,false));check(!deck::usageCacheFresh(t+3600,fetched,false));}
  check(deck::usageManualFloor<deck::usageSpacing&&deck::usageSpacing<deck::usageInterval&&deck::usageInterval>=3600&&deck::usageSpacing>=300&&deck::usageProbeTimeout>=5&&deck::usageProbeTimeout<=60);
  std::cout<<checks<<" account-limit policy assertions passed\n";
 }

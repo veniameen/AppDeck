@@ -3,6 +3,7 @@
 // AppDeck's small display record: percentages, reset times, plan, account label. The payloads
 // contain no credentials and none are ever requested.
 #include "usage_policy.hpp"
+#include "usage_error_policy.hpp"
 bool usageKind(Obj o,const char* name){return o&&send<bool>(o,"isKindOfClass:",cls(name));}
 Obj usageJSON(const char* bytes,Size length){
  if(!bytes||!length||length>1024*1024)return nullptr;Obj data=send(cls("NSData"),"dataWithBytes:length:",bytes,(UInt)length);Obj e=nullptr;
@@ -92,13 +93,35 @@ Obj usageAccountClaude(Obj status){
  Obj method=get(status,"authMethod");if(usageKind(method,"NSString")&&send<UInt>(method,"length")<=40)put(r,"kind",method);
  Obj email=get(status,"email");if(usageKind(email,"NSString")&&send<UInt>(email,"length")<=254)put(r,"email",email);
  Obj plan=get(status,"subscriptionType");if(usageKind(plan,"NSString")&&send<UInt>(plan,"length")<=40)put(r,"plan",plan);
+ Obj org=get(status,"orgId");if(usageKind(org,"NSString")&&send<UInt>(org,"length")>0&&send<UInt>(org,"length")<=128)put(r,"orgId",org);
  return r;
 }
-// JSON-RPC error object -> "auth" | "unsupported" | "error"
-const char* usageErrorKind(Obj error){
- if(!usageKind(error,"NSDictionary"))return "error";
- if(integer(get(error,"code"))==-32601)return "unsupported"; // method not found: older Codex
- Obj message=get(error,"message");const char* m=usageKind(message,"NSString")?utf8(message):"";
- if(strstr(m,"authentication required")||strstr(m,"not logged in")||strstr(m,"login"))return "auth";
- return "error";
+// Broad SDK wrappers must not hide a more specific vendor explanation. A generic 403 outranks
+// "authentication_failed", but only explicit suspension wording can produce "suspended".
+int usageErrorSpecificity(const char* kind){
+ if(!strcmp(kind,"suspended"))return 100;
+ if(!strcmp(kind,"expired"))return 90;
+ if(!strcmp(kind,"network")||!strcmp(kind,"proxy"))return 80;
+ if(!strcmp(kind,"quota")||!strcmp(kind,"region"))return 70;
+ if(!strcmp(kind,"timeout")||!strcmp(kind,"unsupported"))return 60;
+ if(!strcmp(kind,"ratelimit"))return 50;
+ if(!strcmp(kind,"service"))return 30;
+ if(!strcmp(kind,"denied"))return 20;
+ if(!strcmp(kind,"auth"))return 10;
+ return 0;
 }
+// Only recognized error fields are inspected, at most 64 values, 16 array entries and four
+// nesting levels. The raw response is never retained in the display cache.
+const char* usageErrorKindWalk(Obj error,unsigned& budget,int depth){
+ if(!budget||depth>3)return "error";--budget;
+ if(usageKind(error,"NSString"))return usage_error::classify(utf8(error));
+ const char* best="error";auto consider=[&](const char* kind){if(usageErrorSpecificity(kind)>usageErrorSpecificity(best))best=kind;};
+ if(usageKind(error,"NSArray")){for(UInt i=0;i<count(error)&&i<16&&budget;++i)consider(usageErrorKindWalk(at(error,i),budget,depth+1));return best;}
+ if(!usageKind(error,"NSDictionary"))return best;
+ Obj code=get(error,"code");if(usageKind(code,"NSNumber")&&integer(code)==-32601)consider("unsupported");
+ for(const char* key:{"status","statusCode","status_code","api_error_status","http_status","code"}){Obj value=get(error,key);if(usageKind(value,"NSNumber")&&integer(value)>=400&&integer(value)<=599)consider(usage_error::classify("",(int)integer(value)));}
+ // Claude SDK terminal error envelopes can carry their explanation in `result`.
+ for(const char* key:{"message","type","error","errors","data","result"})if(budget)consider(usageErrorKindWalk(get(error,key),budget,depth+1));
+ return best;
+}
+const char* usageErrorKind(Obj error){unsigned budget=64;return usageErrorKindWalk(error,budget,0);}

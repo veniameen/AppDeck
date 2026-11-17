@@ -119,6 +119,12 @@ Each automation has **one owner**: the profile where it was created. In the othe
 
 Run the owner profile and enable the schedule there: AppDeck is not a scheduler and never fails over to another profile. Conflicting edits of one definition stay conflicts. Transferring a definition does not transfer run history, queues or memory.
 
+## Clear limit-check errors
+
+A network refusal, an expired sign-in, an exhausted usage window and an explicitly suspended account are different states. AppDeck shows a short next step for each; a generic HTTP 403 does not establish a ban. When a temporary failure leaves prior numbers visible, they are greyed out and the current error is shown below them; the tooltip gives the full action and original data age. Raw vendor diagnostics are never displayed. Clicking an expired Claude meter sign-in offers the existing Claude Code sign-in flow for that profile.
+
+Claude profiles on the ordinary system connection can reuse a recent successful quota response only after the CLI confirms the same current account, organization, authentication kind and plan. The original fetch time is preserved. Profiles with a proxy, unknown identity or an earlier error get an independent check. This cache stays in memory and does not merge profile files or sign-ins.
+
 ## Account limits (Codex)
 
 Turn it on once per Codex group: with **Account limits…** at the bottom of the Profiles page or in **Shared settings**; the same place turns it off and forgets the cached numbers.
@@ -127,7 +133,7 @@ Turn it on once per Codex group: with **Account limits…** at the bottom of the
 
 **What is stored:** percentages, reset times, the plan, an exhaustion flag and the account address for the card label. No tokens. Diagnostics never include addresses.
 
-**How often.** Strictly one profile at a time. Automatically at most once an hour per account and at least five minutes between two automatic checks of any profiles — no event-driven extra checks. Manually with **Limits ↻** or a click on a card's limit strip: immediately, at most once every 20 seconds per account.
+**How often.** Strictly one profile at a time. Automatically at most once an hour per profile and at least five minutes between two automatic checks of any profiles — no event-driven extra checks. Manually with **Limits ↻** or a click on a card's limit strip: immediately, at most once every 20 seconds per profile.
 
 **Reading it.** “WEEK — 37% left”, a thin meter and “resets Sat 11:10”. The number and the meter stay in the neutral ink from 25 %, turn amber at 10–24 % and red below 10 %; “used up” at 0 %. With three windows (Claude) a card shows only the numbers, to keep the three columns readable. Windows are identified by duration, not by name. Grey numbers with “data from …” are the last good answer when a fresh one failed; a window whose reset time has passed shows “window reset” until it is checked again. **Not signed in** means the profile has never been launched or was signed out.
 

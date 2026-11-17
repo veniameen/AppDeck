@@ -40,8 +40,26 @@ Obj usageAgeText(double at){
  if(age<3600)return formatInt(T("%ld min ago","%ld мин назад"),(Int)(age/60));if(age<86400)return formatInt(T("%ld h ago","%ld ч назад"),(Int)(age/3600));return usageClock(at,T("MMM d, HH:mm","d MMM HH:mm"));
 }
 bool usageAsking(Obj p){return usageInFlight&&same(usageInFlight,get(p,"id"));}
+// Fixed, localized categories only. Vendor diagnostics can contain credentials or account labels.
+Obj usageErrorMessage(Obj e,bool claude){
+ if(same(e,str("network")))return str(T("Network unavailable — check the connection and VPN","Сеть недоступна — проверьте подключение и VPN"));
+ if(same(e,str("proxy")))return str(T("Proxy unavailable — check its settings; no direct retry","Прокси недоступен — проверьте настройки; прямого повтора нет"));
+ if(same(e,str("expired")))return str(claude?T("Sign-in expired — reconnect Claude Code for this profile","Вход истёк — подключите Claude Code для этого профиля заново"):T("Sign-in expired — sign in again in this app profile","Вход истёк — войдите заново в этом профиле приложения"));
+ if(same(e,str("quota")))return str(T("Usage limit reached — wait for its reset or check your plan","Лимит исчерпан — дождитесь сброса или проверьте тариф"));
+ if(same(e,str("ratelimit")))return str(T("Too many requests — wait before checking limits again","Слишком много запросов — подождите перед новой проверкой"));
+ if(same(e,str("suspended")))return str(T("Service reports suspended access — contact its support","Сервис сообщил о блокировке доступа — обратитесь в поддержку"));
+ if(same(e,str("region")))return str(T("Region not supported — check the service's country list","Регион не поддерживается — проверьте список стран сервиса"));
+ if(same(e,str("denied")))return str(T("Access refused — check the app; this does not confirm a ban","Доступ отклонён — проверьте приложение; блокировка не подтверждена"));
+ if(same(e,str("service")))return str(T("Service temporarily unavailable — check its status and retry later","Сервис временно недоступен — проверьте статус и повторите позже"));
+ if(same(e,str("protocol")))return str(T("Could not read the helper's reply — check for an app update","Не удалось прочитать ответ — проверьте обновления приложения"));
+ if(same(e,str("timeout")))return str(claude?T("Claude Code did not answer — check the network and retry later","Claude Code не ответил — проверьте сеть и повторите позже"):T("Codex did not answer — check the network and retry later","Codex не ответил — проверьте сеть и повторите позже"));
+ if(same(e,str("spawn")))return str(claude?T("Could not start Claude Code — check its installation","Не удалось запустить Claude Code — проверьте установку"):T("Could not start the Codex helper — check the app installation","Не удалось запустить помощник Codex — проверьте установку"));
+ return nullptr;
+}
 Obj usageMessage(Obj p){
  Obj u=usageOf(p),e=get(u,"error");bool claude=usageIsClaude(appFor(p));
+ if(usageAsking(p))return str(T("Checking limit…","Проверяю лимит…"));
+ Obj classified=usageErrorMessage(e,claude);if(classified)return classified;
  if(claude&&!usageAsking(p)){
   if(same(e,str("auth")))return str(T("Claude Code sign-in needed to show limits — click here","Нужен вход Claude Code для показа лимитов — нажмите здесь"));
   if(same(e,str("nocli")))return str(T("Claude Code (claude) not found: Claude limits need it","Не найден Claude Code (claude): без него лимиты Claude недоступны"));
@@ -49,13 +67,10 @@ Obj usageMessage(Obj p){
   if(same(e,str("unsupported")))return str(T("This Claude Code version does not report limits — update claude","Эта версия Claude Code не сообщает лимиты — обновите claude"));
   if(same(e,str("nodata")))return str(T("Claude Code got no limits from the server — click to retry","Claude Code не получил лимиты от сервера — нажмите, чтобы повторить"));
  }
- if(same(e,str("proxy"))&&!usageAsking(p))return str(T("The proxy did not start — limits wait for it","Прокси не запустился — лимиты подождут"));
- if(usageAsking(p))return str(T("Checking limit…","Проверяю лимит…"));if(!u)return str(T("Limit not checked yet — click to check","Лимит ещё не запрашивался — нажмите, чтобы проверить"));
+ if(!u)return str(T("Limit not checked yet — click to check","Лимит ещё не запрашивался — нажмите, чтобы проверить"));
  if(same(e,str("auth")))return str(T("Not signed in — the limit appears after sign-in","Нет входа в аккаунт — лимит появится после входа"));
  if(same(e,str("apikey")))return str(T("Signed in with an API key: subscription limits do not apply","Вход по API-ключу: лимиты подписки не применяются"));
  if(same(e,str("unsupported")))return str(T("This app version does not report limits","Эта версия приложения не сообщает лимиты"));
- if(same(e,str("timeout")))return str(T("Codex did not answer in time — will retry later","Codex не ответил вовремя — повторю позже"));
- if(same(e,str("spawn")))return str(T("Could not start the Codex helper process","Не удалось запустить служебный процесс Codex"));
  if(same(e,str("nodata")))return str(T("The server returned no limit windows for this plan","Для этого тарифа сервер не вернул окна лимита"));
  return e?str(T("No limit received — will retry later","Лимит не получен — повторю позже")):str(T("No limit data","Нет данных о лимите"));
 }
@@ -64,7 +79,7 @@ Obj usageSummary(Obj p){
  UInt n=usageWindowCount(p);if(!n)return usageMessage(p);Obj line=str(T("left: ","осталось: "));
  for(UInt i=0;i<n;++i){Obj w=usageWindowAt(p,i);line=cat(cat(cat(line,str(i?" · ":"")),send(usageTitle(w),"lowercaseString")),formatInt(" %ld %%",(Int)usageRemaining(w)));}
  Obj reset=usageResetText(usageResets(usageTightest(p)));if(send<UInt>(reset,"length"))line=cat(cat(line,str("\n")),reset);
- Obj u=usageOf(p);if(get(u,"error"))line=cat(cat(line,str(T(" · data from "," · данные "))),usageAgeText(send<double>(get(u,"windowsAt"),"doubleValue")));return line;
+ Obj u=usageOf(p);if(get(u,"error")){line=cat(cat(line,str(T(" · data from "," · данные "))),usageAgeText(send<double>(get(u,"windowsAt"),"doubleValue")));line=cat(cat(line,str("\n")),usageMessage(p));}return line;
 }
 // Within one app, the account with the most headroom is the one worth switching to.
 bool usageIsBest(Obj p){
@@ -88,14 +103,15 @@ Obj usageStrip(Obj card,double x,double y,double width,Int tag){
   put(col,"caption",label(card,"",rect(x,y,10,14),10.5,faint(),.3));Obj value=label(card,"",rect(x,y-1,10,16),12,ink(),.3);send<void>(value,"setFont:",monoFont(12,.3));send<void>(value,"setAlignment:",alignRight);put(col,"value",value);
   Obj track=panel(card,rect(x,y+22,10,4),fill(.10),2);put(col,"track",track);put(col,"fill",panel(track,rect(0,0,0,4),ink(),2));
   Obj reset=label(card,"",rect(x,y+32,10,14),11,faint(),0);send<void>(reset,"setLineBreakMode:",(Int)4);put(col,"reset",reset);put(ref,i==0?"c0":i==1?"c1":"c2",col);}
- Obj message=label(card,"",rect(x,y+11,width,18),12,muted(),.1);send<void>(message,"setLineBreakMode:",(Int)4);put(ref,"message",message);
+ Obj message=label(card,"",rect(x,y+5,width,38),12,muted(),.1);send<void>(message,"setLineBreakMode:",(Int)0);send<void>(message,"setMaximumNumberOfLines:",(Int)2);put(ref,"message",message);
  Obj hit=styledButton(deckButtonClass,card,"","usageRefresh:",rect(x-8,y-7,width+16,54),tag,"overlay",8);put(ref,"hit",hit);send<void>(hit,"setAccessibilityLabel:",str(T("Refresh account limit","Обновить лимит аккаунта")));
  return ref;
 }
 void usageApplyStrip(Obj ref,Obj p){
  if(!ref)return;double x=send<double>(get(ref,"x"),"doubleValue"),y=send<double>(get(ref,"y"),"doubleValue"),width=send<double>(get(ref,"width"),"doubleValue");
  UInt n=usageWindowCount(p);Obj u=usageOf(p);bool stale=n&&get(u,"error");
- usageHide(get(ref,"message"),n>0);if(!n)send<void>(get(ref,"message"),"setStringValue:",usageMessage(p));
+ usageHide(get(ref,"message"),n>0&&!stale);if(!n||stale){Obj message=get(ref,"message"),text=usageMessage(p);if(stale)text=at(send(text,"componentsSeparatedByString:",str(" — ")),0);
+  send<void>(message,"setFrame:",rect(x,y+(stale?32:5),width,stale?18:38));send<void>(message,"setMaximumNumberOfLines:",(Int)(stale?1:2));send<void>(message,"setLineBreakMode:",(Int)(stale?4:0));send<void>(message,"setStringValue:",text);send<void>(message,"setTextColor:",stale?warnColor():muted());}
  double gap=n>2?16:24,colW=n?(width-gap*(n-1))/n:width;
  for(UInt i=0;i<usageShown;++i){Obj col=get(ref,i==0?"c0":i==1?"c1":"c2");bool on=i<n;for(const char* k:{"caption","value","track","reset"})usageHide(get(col,k),!on);if(!on)continue;
   Obj w=usageWindowAt(p,i);int left=usageRemaining(w);double x0=x+i*(colW+gap);bool rolled=usageResets(w)>0&&usageResets(w)<=nowUnix(),grey=stale||rolled;
@@ -109,7 +125,9 @@ void usageApplyStrip(Obj ref,Obj p){
   send<void>(send(get(col,"fill"),"layer"),"setBackgroundColor:",send(grey?muted():usageColor(left),"CGColor"));
   Obj reset=usageResetText(usageResets(w),n>2);send<void>(get(col,"reset"),"setToolTip:",usageResetText(usageResets(w)));if(stale&&i==0&&n<3)reset=cat(cat(reset,str(send<UInt>(reset,"length")?" · ":"")),cat(str(T("data from ","данные ")),usageAgeText(send<double>(get(u,"windowsAt"),"doubleValue"))));
   send<void>(get(col,"reset"),"setFrame:",rect(x0,y+32,colW,14));send<void>(get(col,"reset"),"setStringValue:",reset);
+  if(stale)usageHide(get(col,"reset"),true); // keep the cached bars, use their caption row for the current error
  }
- Obj tip=usageAsking(p)?str(T("Checking limit…","Проверяю лимит…")):cat(str(T("Click to refresh · checked ","Нажмите, чтобы обновить · проверено ")),usageAgeText(send<double>(get(u,"checked"),"doubleValue")));
- if(get(u,"detail"))tip=cat(cat(tip,str("\n")),get(u,"detail"));send<void>(get(ref,"hit"),"setToolTip:",u?tip:str(T("Click to ask Codex for the limit","Нажмите, чтобы запросить лимит у Codex")));
+ Obj tip=usageAsking(p)?str(T("Checking limit…","Проверяю лимит…")):cat(str(n?T("Click to refresh · data from ","Нажмите, чтобы обновить · данные "):T("Click to refresh · checked ","Нажмите, чтобы обновить · проверено ")),usageAgeText(send<double>(get(u,n?"windowsAt":"checked"),"doubleValue")));
+ if(get(u,"error"))tip=cat(cat(tip,str("\n")),stale?usageSummary(p):usageMessage(p));
+ send<void>(get(ref,"hit"),"setToolTip:",u?tip:str(usageIsClaude(appFor(p))?T("Click to ask Claude Code for the limit","Нажмите, чтобы запросить лимит у Claude Code"):T("Click to ask Codex for the limit","Нажмите, чтобы запросить лимит у Codex")));
 }
