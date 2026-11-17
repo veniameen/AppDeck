@@ -89,15 +89,15 @@ Obj syncGroupPass(Obj a,bool apply){
  struct Reset{~Reset(){groupSyncBusy=false;}} reset;
  Obj journal=groupSyncLoad(a);if(!journal)return str(T("The shared sync journal is damaged or has an unknown version. Profiles are unchanged.","Общий реестр синхронизации повреждён или имеет неизвестную версию. Профили не изменены."));
  Obj previous=groupClone(journal),ps=get(journal,"projects"),as=get(journal,"automations");if(!ps){ps=dict();put(journal,"projects",ps);}
- Obj members=groupSyncParticipants(a),observations=array(),automationObservations=array();bool unreadable=false;
+ Obj members=groupSyncParticipants(a),observations=array(),automationObservations=array();bool automationUnavailable=false;
  for(UInt i=0;i<count(members);++i){Obj entry=at(members,i),path=join(get(entry,"home"),".codex-global-state.json"),current=readJSON(path);
   bool established=get(get(ps,"profiles"),utf8(get(entry,"profileId")))!=nullptr;
   if(!current&&!exists(path)&&directory(get(entry,"home"))&&!established){current=dict();put(current,"local-projects",dict());put(current,"project-order",array());}
-  if(current)put(entry,"raw",current);else if(exists(path)||established)unreadable=true;
+  if(current)put(entry,"raw",current);
   Obj observation=dict();put(observation,"profileId",get(entry,"profileId"));put(observation,"snapshot",current);add(observations,observation);
   Obj automationObservation=groupReadAutomations(entry),automationBaseline=get(get(as,"profiles"),utf8(get(entry,"profileId")));
   if(count(automationBaseline)&&!exists(join(get(entry,"home"),"automations")))put(automationObservation,"complete",boolean(false));
-  if(!truth(get(automationObservation,"complete"))&&directory(get(entry,"home")))unreadable=true;
+  if(!truth(get(automationObservation,"complete"))&&(directory(get(entry,"home"))||count(automationBaseline)))automationUnavailable=true;
   add(automationObservations,automationObservation);
  }
  Obj reconciled=projectSyncReconcile(ps,observations);if(!truth(get(reconciled,"ok")))return str(T("Project reconciliation rejected: check the version and size of the shared journal.","Согласование проектов отклонено: проверьте версию и размер общего реестра."));
@@ -115,10 +115,11 @@ Obj syncGroupPass(Obj a,bool apply){
  }
  if(!same(previous,journal)&&!groupSyncSave(a,journal))return str(T("Could not save the shared journal. Profiles are unchanged.","Не удалось сохранить общий реестр. Профили не изменены."));
  Obj deleted=groupProjectDeleted(ps),serverRevisions=get(journal,"serverRevisions");if(!isClass(serverRevisions,"NSDictionary")){serverRevisions=dict();put(journal,"serverRevisions",serverRevisions);}
- Int revision=integer(get(ps,"revision")),pending=0;Obj pendingProfiles=dict(),failure=nullptr;bool nativeValidated=false;
- for(UInt i=0;i<count(members);++i){Obj entry=at(members,i),id=get(entry,"profileId"),current=get(entry,"raw"),profile=get(entry,"profile");if(!current)continue;
-  // A malformed local entry makes an observation unusable as a whole; never overwrite it.
-  if(!projectSyncCleanSnapshot(current)){unreadable=true;continue;}
+ Int revision=integer(get(ps,"revision")),pending=0,deferredProjects=0;Obj pendingProfiles=dict(),failure=nullptr;bool nativeValidated=false;
+ for(UInt i=0;i<count(members);++i){Obj entry=at(members,i),id=get(entry,"profileId"),current=get(entry,"raw"),profile=get(entry,"profile");
+  // Missing or unsupported project caches are not empty registries. Preserve their data and
+  // baseline, keep healthy peers syncing, and retry later without blocking application launch.
+  if(!projectSyncCleanSnapshot(current)){++deferredProjects;put(pendingProfiles,utf8(id),boolean(true));continue;}
   Obj projected=groupProjectProjection(current,snapshot,deleted);bool needed=!same(current,projected)||integer(get(serverRevisions,utf8(id)))!=revision||
    (apply&&!nativeValidated&&!groupParticipantRunning(a,entry)&&directory(get(entry,"home")));
   if(!needed){if(profile)erase(profile,"syncPending");continue;}
@@ -174,7 +175,9 @@ Obj syncGroupPass(Obj a,bool apply){
  // Re-read after writes: stopped duplicate ACTIVE copies may just have been paused. Launch
  // admission must use the remaining on-disk risk rather than the pre-apply observation.
  Obj after=array();for(UInt i=0;i<count(members);++i){Obj entry=at(members,i);put(entry,"running",boolean(groupParticipantRunning(a,entry)));Obj observation=groupReadAutomations(entry);
-  if(count(get(get(as,"profiles"),utf8(get(entry,"profileId"))))&&!exists(join(get(entry,"home"),"automations")))put(observation,"complete",boolean(false));add(after,observation);}
+  Obj baseline=get(get(as,"profiles"),utf8(get(entry,"profileId")));
+  if(count(baseline)&&!exists(join(get(entry,"home"),"automations")))put(observation,"complete",boolean(false));
+  if(!truth(get(observation,"complete"))&&(directory(get(entry,"home"))||count(baseline)))automationUnavailable=true;add(after,observation);}
  Obj checked=automationSyncReconcile(as,after);put(a,"syncUnsafe",boolean(count(get(checked,"unsafe"))>0));
  Obj awaiting=get(checked,"pending");for(UInt i=0;i<count(awaiting);++i)put(pendingProfiles,utf8(at(awaiting,i)),boolean(true));
  awaiting=get(checked,"writes");for(UInt i=0;i<count(awaiting);++i)put(pendingProfiles,utf8(get(at(awaiting,i),"profileId")),boolean(true));
@@ -182,8 +185,11 @@ Obj syncGroupPass(Obj a,bool apply){
  Obj conflictsState=dict();put(conflictsState,"projects",get(reconciled,"conflicts"));put(conflictsState,"automations",get(checked,"conflicts"));put(journal,"conflicts",conflictsState);
  groupSyncBookmarks(a,snapshot);
  Int conflicts=(Int)count(get(reconciled,"conflicts"))+(Int)count(get(automationPlan,"conflicts"));
- if(unreadable&&apply&&!failure)failure=str(T("Some profile data is unavailable or unrecognized. It is kept unchanged; launch is postponed until it is fixed.","Есть недоступные или нераспознанные данные профиля. Они сохранены без изменений; запуск отложен до исправления."));
- Obj status=failure?failure:unreadable?str(T("Unrecognized data found: kept unchanged","Есть нераспознанные данные: они сохранены без изменений")):conflicts?str(T("Conflicting changes: the reconciled version was kept; details in the journal","Конфликт изменений: сохранён согласованный вариант; подробности в реестре")):pending?formatInt(T("Updates waiting for a restart: %ld","Обновления ожидают перезапуска: %ld"),pending):str(T("Projects and automations are in sync","Проекты и автоматизации согласованы"));
+ // Automation uncertainty remains a launch gate: an unreadable executor may still be ACTIVE.
+ // Project-cache compatibility has no such execution risk and is reported as pending instead.
+ Obj automationWarning=str(T("Automation data could not be checked. Restore access to the automation folders and retry; launch is paused to prevent duplicate schedule execution.","Не удалось проверить автоматизации. Восстановите доступ к их папкам и повторите; запуск приостановлен для защиты от повторного выполнения расписаний."));
+ if(automationUnavailable&&apply&&!failure)failure=automationWarning;
+ Obj status=failure?failure:automationUnavailable?automationWarning:deferredProjects?formatInt(T("Profiles awaiting project sync: %ld · launch available","Профилей с отложенной синхронизацией: %ld · запуск доступен"),deferredProjects):conflicts?str(T("Conflicting changes: the reconciled version was kept; details in the journal","Конфликт изменений: сохранён согласованный вариант; подробности в реестре")):pending?formatInt(T("Updates waiting for a restart: %ld","Обновления ожидают перезапуска: %ld"),pending):str(T("Projects and automations are in sync","Проекты и автоматизации согласованы"));
  put(a,"syncStatus",status);if(!same(previous,journal))groupSyncSave(a,journal);
  save();return failure;
 }

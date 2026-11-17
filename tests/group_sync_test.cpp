@@ -83,27 +83,45 @@ int main(int argc,char** argv){
  Obj beforeJournal=groupSyncLoad(a);fixtureSync(a,"idempotent second synchronization");integrationCheck(same(beforeJournal,groupSyncLoad(a)),"unchanged synchronization leaves durable journal semantically identical");
 
  // An established member losing its entire registry file is unavailable, not an
- // explicit empty list. Keep its durable baseline and recover from the same file.
+ // explicit empty list. Keep its baseline, allow launch and retry without replacing it.
+ Obj settledStatus=get(a,"syncStatus"),firstBaseline=get(get(get(groupSyncLoad(a),"projects"),"profiles"),utf8(get(first,"id")));
  Obj missingStateBackup=join(fixtureRoot,"temporarily-missing-global-state.json"),missingError=nullptr;
  integrationCheck(send<bool>(fileManager,"moveItemAtPath:toPath:error:",fixtureStatePath(firstHome),missingStateBackup,&missingError),"temporarily remove established global state without destroying it");
- integrationCheck(syncGroup(a,true)!=nullptr,"missing established global state defers launch");
+ integrationCheck(syncGroup(a,true)==nullptr,"missing established global state does not block launch");
+ integrationCheck(truth(get(first,"syncPending"))&&!truth(get(second,"syncPending")),"only the member with missing project data stays pending");
+ integrationCheck(get(a,"syncStatus")&&!same(get(a,"syncStatus"),settledStatus),"missing project data is reported as a nonfatal sync status");
+ integrationCheck(same(firstBaseline,get(get(get(groupSyncLoad(a),"projects"),"profiles"),utf8(get(first,"id")))),"missing project data preserves the exact durable baseline");
  integrationCheck(!exists(fixtureStatePath(firstHome)),"missing established registry is not synthesized as an empty state");
  fixtureProjectCount(base,2,"missing member cannot delete projects from base");fixtureProjectCount(secondHome,2,"missing member cannot delete projects from other copy");
  integrationCheck(count(get(projectSyncSnapshot(get(groupSyncLoad(a),"projects")),"local-projects"))==2,"missing member cannot tombstone canonical projects");
  integrationCheck(send<bool>(fileManager,"moveItemAtPath:toPath:error:",missingStateBackup,fixtureStatePath(firstHome),&missingError),"restore the exact missing global state");
  fixtureSync(a,"missing established registry restored");fixtureProjectCount(firstHome,2,"restored member recovers without losing projects");
+ integrationCheck(!truth(get(first,"syncPending"))&&same(get(a,"syncStatus"),settledStatus),"retry clears the missing-data warning and pending state after recovery");
 
  // A disappeared automation directory is likewise incomplete, not removal of
  // every previously observed definition. Other members must keep their files.
  Obj missingAutomationBackup=join(fixtureRoot,"temporarily-missing-automations"),automationFolder=join(firstHome,"automations");
  integrationCheck(send<bool>(fileManager,"moveItemAtPath:toPath:error:",automationFolder,missingAutomationBackup,&missingError),"temporarily remove established automation directory");
- // Returning a pending/unavailable error is permitted; global deletion is not.
- syncGroup(a,true);Obj survivingAutomation=get(get(get(groupSyncLoad(a),"automations"),"records"),"fixture-paused");
+ // Automation uncertainty still blocks launch; project compatibility must not
+ // weaken the single-owner execution check or authorize global deletion.
+ integrationCheck(syncGroup(a,true)!=nullptr,"missing established automation folder still blocks launch");
+ Obj survivingAutomation=get(get(get(groupSyncLoad(a),"automations"),"records"),"fixture-paused");
  integrationCheck(survivingAutomation&&!truth(get(survivingAutomation,"deleted")),"missing automation directory cannot tombstone the shared definition");
  for(Obj codexHome:{base,secondHome})integrationCheck(same(get(automationDefinition(readText(join(codexHome,"automations/fixture-paused/automation.toml"))),"status"),str("PAUSED")),"other profiles retain paused automation while member directory is unavailable");
  integrationCheck(!exists(automationFolder),"incomplete automation directory is not silently replaced");
  integrationCheck(send<bool>(fileManager,"moveItemAtPath:toPath:error:",missingAutomationBackup,automationFolder,&missingError),"restore the exact missing automation directory");
  fixtureSync(a,"missing automation directory restored");
+
+ // An unavailable entire home also hides its established automation definitions.
+ // Treat that uncertainty as launch-blocking even though its projects may be deferred.
+ Obj missingHomeBackup=join(fixtureRoot,"temporarily-missing-codex-home"),automationBeforeMissingHome=get(groupSyncLoad(a),"automations");
+ integrationCheck(send<bool>(fileManager,"moveItemAtPath:toPath:error:",firstHome,missingHomeBackup,&missingError),"temporarily move an established profile home without destroying data");
+ integrationCheck(syncGroup(a,true)!=nullptr,"missing established profile home still blocks launch for automation safety");
+ integrationCheck(!exists(firstHome),"unavailable established home is not silently recreated");
+ integrationCheck(same(automationBeforeMissingHome,get(groupSyncLoad(a),"automations")),"unavailable profile home preserves automation journal and baselines without tombstones");
+ integrationCheck(send<bool>(fileManager,"moveItemAtPath:toPath:error:",missingHomeBackup,firstHome,&missingError),"restore exact established profile home");
+ fixtureSync(a,"unavailable profile home restored");
+ integrationCheck(!truth(get(first,"syncPending")),"restored profile home clears deferred project synchronization");
 
  // A project created in a copy reaches the base and another stopped copy.
  Obj firstState=fixtureRead(firstHome),newProject=fixtureProject("local-new","Created in first copy","workspace/new");
@@ -121,10 +139,14 @@ int main(int argc,char** argv){
  fixtureSync(a,"saved tombstone survives stale profiles");for(Obj codexHome:{base,firstHome,secondHome})fixtureProjectCount(codexHome,2,"stale profiles do not resurrect deleted project");
  integrationCheck(count(fixtureNativeProjects(a))==2,"native registry removes the mapped deleted project");
 
- // Unknown schema must remain byte-for-meaning intact, while healthy members sync.
+ // Unknown schema must remain byte-for-meaning intact, while healthy members sync
+ // and every profile remains launchable. This also covers an absent local-projects key.
+ Obj secondBaseline=get(get(get(groupSyncLoad(a),"projects"),"profiles"),utf8(get(second,"id")));
  Obj unknown=dict();put(unknown,"future-project-schema",array());put(unknown,"synthetic-account-label",str("unknown-preserved"));fixtureWrite(secondHome,unknown);
  firstState=fixtureRead(firstHome);erase(get(firstState,"local-projects"),"local-copy");fixtureWrite(firstHome,firstState);
- integrationCheck(syncGroup(a,true)!=nullptr,"unknown schema defers launch and reports the unsupported member");integrationCheck(same(unknown,fixtureRead(secondHome)),"unknown profile state is not overwritten");
+ integrationCheck(syncGroup(a,true)==nullptr,"unknown project schema defers only synchronization, not launch");integrationCheck(same(unknown,fixtureRead(secondHome)),"unknown profile state is not overwritten");
+ integrationCheck(truth(get(second,"syncPending"))&&!truth(get(first,"syncPending")),"unknown project schema marks only the affected profile pending");
+ integrationCheck(same(secondBaseline,get(get(get(groupSyncLoad(a),"projects"),"profiles"),utf8(get(second,"id")))),"unknown project schema preserves its durable baseline");
  fixtureProjectCount(base,1,"healthy base still receives deletion with unknown member");fixtureProjectCount(firstHome,1,"healthy copy still receives deletion with unknown member");
  // Restore the previously recognized member from the current canonical projection.
  Obj restored=fixtureDesktop("second-window");Obj canonical=projectSyncSnapshot(get(groupSyncLoad(a),"projects"));
@@ -133,6 +155,25 @@ int main(int argc,char** argv){
  // legacy import when the purpose of this phase is rejoining after an unreadable file.
  put(restored,"app-server-project-id-by-legacy-project-id-by-host",get(secondState,"app-server-project-id-by-legacy-project-id-by-host"));fixtureWrite(secondHome,restored);
  fixtureSync(a,"recognized member rejoins");
+ integrationCheck(!truth(get(second,"syncPending")),"recognized member automatically clears deferred synchronization");
+
+ // A partially written JSON file is also a skipped observation. Repeated sync
+ // preserves its bytes and baseline while supported peers continue to converge.
+ Obj validFirstText=readText(fixtureStatePath(firstHome)),malformedText=str("{\"local-projects\":");
+ firstBaseline=get(get(get(groupSyncLoad(a),"projects"),"profiles"),utf8(get(first,"id")));
+ integrationCheck(validFirstText&&writeText(fixtureStatePath(firstHome),malformedText),"seed malformed Desktop JSON without losing the recognized fixture");
+ fixtureSync(a,"malformed Desktop JSON permits launch");
+ integrationCheck(same(readText(fixtureStatePath(firstHome)),malformedText)&&truth(get(first,"syncPending")),"malformed JSON stays byte-identical and pending");
+ integrationCheck(same(firstBaseline,get(get(get(groupSyncLoad(a),"projects"),"profiles"),utf8(get(first,"id")))),"malformed JSON does not replace the durable baseline");
+ secondState=fixtureRead(secondHome);Obj renamed=get(get(secondState,"local-projects"),"local-new");
+ put(renamed,"name",str("Renamed while peer is unreadable"));put(renamed,"updatedAt",num(300));fixtureWrite(secondHome,secondState);
+ fixtureSync(a,"healthy peers converge while malformed member is deferred");
+ for(Obj codexHome:{base,secondHome})integrationCheck(same(get(get(get(fixtureRead(codexHome),"local-projects"),"local-new"),"name"),get(renamed,"name")),"healthy member receives rename while another member has malformed JSON");
+ integrationCheck(same(readText(fixtureStatePath(firstHome)),malformedText)&&same(firstBaseline,get(get(get(groupSyncLoad(a),"projects"),"profiles"),utf8(get(first,"id")))),"repeated synchronization preserves malformed bytes and baseline");
+ integrationCheck(truth(get(get(get(get(groupSyncLoad(a),"projects"),"records"),"local-base"),"deleted")),"unreadable project data cannot resurrect a recorded deletion");
+ integrationCheck(writeText(fixtureStatePath(firstHome),validFirstText),"restore exact recognized Desktop JSON after partial-write fixture");
+ fixtureSync(a,"malformed member recovers on automatic retry");
+ integrationCheck(!truth(get(first,"syncPending"))&&same(get(get(get(fixtureRead(firstHome),"local-projects"),"local-new"),"name"),get(renamed,"name")),"recovered member receives pending rename and clears its warning");
 
  // An explicit empty list removes the last project everywhere, without touching
  // any unrelated window state or activating an automation.

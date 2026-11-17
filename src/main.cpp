@@ -1076,7 +1076,7 @@ void refresh(){
    send<void>(status,"setStringValue:",restarting(p)?str(T("Restarting…","Перезапускается…")):active?str(truth(get(p,"syncPending"))?T("Running · updates pending","Запущен · есть обновления"):T("Running","Запущен")):failed?str(T("Failed to start","Не запустился")):str(T("Not running","Не запущен")));
    if(Obj via=proxyShownName(p))send<void>(status,"setStringValue:",cat(cat(send(status,"stringValue"),str(isStandalone(appFor(p))?T(" · proxy requested: "," · запрос прокси: "):T(" · via "," · через "))),via));
    send<void>(status,"setTextColor:",restarting(p)||failed?warnColor():muted());
-   if(Obj dot=get(ref,"dot"))statusDotColor(dot,restarting(p)||failed?warnColor():active?liveColor():dim(),active,!active&&!restarting(p)&&!failed);send<void>(status,"setToolTip:",truth(get(p,"syncPending"))?str(T("The shared list and automations apply after this instance fully restarts.","Общий список и автоматизации применятся после полного перезапуска этого экземпляра.")):get(p,"lastError"));
+   if(Obj dot=get(ref,"dot"))statusDotColor(dot,restarting(p)||failed?warnColor():active?liveColor():dim(),active,!active&&!restarting(p)&&!failed);send<void>(status,"setToolTip:",truth(get(p,"syncPending"))?str(T("Shared updates are retried before the next launch. Unavailable project data is kept unchanged.","Общие обновления будут проверены перед следующим запуском. Недоступные данные проектов сохранены без изменений.")):get(p,"lastError"));
    if(truth(get(ref,"live"))!=active)flagged=true; // the button row differs between the two states
    usageApplyCard(ref,p);}
   if(active!=truth(get(p,"uiRunning"))){put(p,"uiRunning",num(active));menuChanged=true;}

@@ -58,6 +58,8 @@ AppDeck periodically observes the group and records deltas and pending status in
 
 Changes destined for a running participant are marked pending. They are applied after the process stops, before AppDeck starts it again. A new participant with no previous state can receive an initial projection. A previously observed Desktop state file or a previously populated automation directory disappearing is unavailable information, not evidence that every contained item was deleted. Unreadable or unrecognized existing state remains unchanged. The supported guarantee is convergence through a full process restart, not instant sidebar refresh in every already-open window.
 
+A missing, unreadable or unsupported project cache defers project synchronization for that participant without blocking application launch for the group. Its journal baseline is retained, healthy participants continue synchronizing, and the affected participant is checked again on subsequent observations and before the next launch. AppDeck does not reset or replace the unknown cache. Unavailable automation data remains launch-blocking because an unchecked schedule may still be active; project compatibility warnings do not bypass automation ownership protections.
+
 The manager uses its existing per-data-root singleton lock and an in-process synchronization guard. It rechecks process ownership before writes, and compares the observed file with its current contents before replacing it. A project API request is followed by another process/file check before committing the Desktop cache. These checks do not lock Codex against an independent external launch or an unrelated program editing files; operations outside AppDeck remain a concurrency boundary.
 
 ## Persistence and recovery
