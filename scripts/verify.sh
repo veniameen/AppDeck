@@ -12,6 +12,8 @@ STRICT=(xcrun clang++ -std=c++17 -fno-exceptions -fno-rtti -Wall -Wextra -Werror
 
 scripts/build.sh
 scripts/test.sh
+bash scripts/test-vless.sh
+bash scripts/test-vless-ui.sh
 bash scripts/test-claude-sessions.sh
 bash scripts/test-claude-profiles.sh
 bash scripts/test-claude-network.sh

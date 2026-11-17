@@ -1,12 +1,13 @@
 // Included inside main.cpp's private namespace, after usage_limits.hpp.
-// Proxies: the owner's list of upstream HTTP or SOCKS5 proxies, a default for every profile and a
+// Proxies: the owner's list of upstream HTTP, SOCKS5 or VLESS connections, a default for every profile and a
 // per-profile choice ("default", "none" or a proxy id). The list lives in proxies.plist (0600) next to
 // state.plist and never in state.plist, the menus or the diagnostics: its address lines may carry
 // logins and passwords. Chromium cannot send proxy credentials, so a profile that uses a proxy is
 // started with its own local bridge, `Contents/MacOS/appdeck-proxy` (src/proxy_bridge.cpp): a loopback
 // HTTP proxy that forwards through the upstream and adds the credentials. The bridge receives its
 // configuration on stdin (never argv or the environment) and exits when the window's process exits;
-// the bridges for limit probes watch AppDeck itself.
+// the bridges for limit probes watch AppDeck itself. VLESS uses the separate appdeck-vless helper
+// with a bounded JSON configuration on the same private pipe and the same loopback/lifetime contract.
 
 Obj proxies=nullptr;           // [{id,name,scheme,lines[],user,pass,check{at,ok,total,fastest,auth}}]
 Obj proxyProbeBridges=nullptr; // proxy id -> {task,writer,port}: bridges for limit probes
@@ -15,10 +16,15 @@ Obj proxyChecking=nullptr;     // ids with a check in flight
 bool proxiesDamaged=false;     // proxies.plist exists but could not be read in full: never overwrite it, never launch without the proxy it names
 
 Obj proxyPath(){return join(dataRoot,"proxies.plist");}
+bool proxyIsVless(Obj x){return same(get(x,"scheme"),str("vless"));}
 bool proxyValid(Obj x){
  deck::ProxyScheme s;
- return isClass(x,"NSDictionary")&&isClass(get(x,"id"),"NSString")&&deck::uuid(utf8(get(x,"id")))&&isClass(get(x,"name"),"NSString")&&
-  isClass(get(x,"scheme"),"NSString")&&deck::proxySchemeParse(utf8(get(x,"scheme")),s)&&isClass(get(x,"lines"),"NSArray");
+ if(!isClass(x,"NSDictionary")||!isClass(get(x,"id"),"NSString")||!deck::uuid(utf8(get(x,"id")))||!isClass(get(x,"name"),"NSString")||
+  !isClass(get(x,"scheme"),"NSString")||!isClass(get(x,"lines"),"NSArray"))return false;
+ if(!proxyIsVless(x))return deck::proxySchemeParse(utf8(get(x,"scheme")),s);
+ Obj lines=get(x,"lines");deck::VlessEndpoint endpoint;
+ return count(lines)==1&&isClass(at(lines,0),"NSString")&&!get(x,"user")&&!get(x,"pass")&&
+  deck::vlessParse(utf8(at(lines,0)),send<UInt>(at(lines,0),"lengthOfBytesUsingEncoding:",(UInt)4),endpoint)==deck::VlessParseError::Ok;
 }
 void proxyLoad(){
  Obj p=proxyPath();Obj loaded=exists(p)&&!symlink(p)?mutablePlist(p):nullptr;Obj list=array();
@@ -66,6 +72,17 @@ void proxyHex(const char* s,char* out,deck::Size cap){
  for(const unsigned char* p=(const unsigned char*)s;*p&&o+2<cap;++p){out[o++]=digits[*p>>4];out[o++]=digits[*p&15];}out[o]=0;
 }
 Obj proxyConfig(Obj x,Obj* why){
+ if(proxyIsVless(x)){
+  deck::VlessEndpoint e;Obj lines=get(x,"lines");
+  if(get(x,"user")||get(x,"pass")||!isClass(lines,"NSArray")||count(lines)!=1||!isClass(at(lines,0),"NSString")||deck::vlessParse(utf8(at(lines,0)),send<UInt>(at(lines,0),"lengthOfBytesUsingEncoding:",(UInt)4),e)!=deck::VlessParseError::Ok){
+   if(why)*why=str(T("The VLESS link is invalid or uses unsupported options. Edit it on the Proxy page.","Ссылка VLESS некорректна или содержит неподдерживаемые параметры. Исправьте её на странице «Прокси»."));return nullptr;}
+  Obj config=dict();put(config,"version",num(1));put(config,"server",str(e.host));put(config,"port",num(e.port));put(config,"uuid",str(e.uuid));
+  put(config,"security",str(e.security==deck::VlessSecurity::Reality?"reality":"tls"));put(config,"server_name",str(e.sni));put(config,"fingerprint",str(e.fingerprint));
+  put(config,"public_key",str(e.realityPublicKey));put(config,"short_id",str(e.realityShortId));put(config,"flow",str(e.vision?"xtls-rprx-vision":""));
+  Obj error=nullptr;Obj encoded=send(cls("NSJSONSerialization"),"dataWithJSONObject:options:error:",config,(UInt)0,&error);
+  memset(&e,0,sizeof e);if(!encoded){if(why)*why=str(T("The VLESS settings could not be prepared.","Не удалось подготовить настройки VLESS."));return nullptr;}
+  Obj text=autoRelease(send(send(cls("NSString"),"alloc"),"initWithData:encoding:",encoded,(UInt)4));return cat(text,str("\n"));
+ }
  Obj text=cat(cat(str("scheme "),get(x,"scheme")),str("\n"));Obj lines=get(x,"lines");Int usable=0;
  const char* user=isClass(get(x,"user"),"NSString")?utf8(get(x,"user")):"";const char* pass=isClass(get(x,"pass"),"NSString")?utf8(get(x,"pass")):"";
  if(strlen(user)>=deck::proxyFieldCap||strlen(pass)>=deck::proxyFieldCap){if(why)*why=str(T("The common login or password is longer than 255 bytes.","Общий логин или пароль длиннее 255 байт."));return nullptr;}
@@ -75,23 +92,25 @@ Obj proxyConfig(Obj x,Obj* why){
  if(!usable){if(why)*why=str(T("The proxy has no valid address. Edit it on the Proxy page.","У прокси нет корректного адреса. Исправьте его на странице «Прокси».")) ;return nullptr;}
  return cat(text,str("\n"));
 }
-Obj proxyHelper(){Obj p=send(send(cls("NSBundle"),"mainBundle"),"pathForAuxiliaryExecutable:",str("appdeck-proxy"));return p&&send<bool>(fileManager,"isExecutableFileAtPath:",p)?p:nullptr;}
+Obj proxyHelper(bool vless=false){Obj p=send(send(cls("NSBundle"),"mainBundle"),"pathForAuxiliaryExecutable:",str(vless?"appdeck-vless":"appdeck-proxy"));return p&&send<bool>(fileManager,"isExecutableFileAtPath:",p)?p:nullptr;}
 // Starts the helper in `serve` or `check` mode with the configuration on its stdin.
-Obj proxySpawn(const char* mode,Obj config,Obj* why,Obj* writer,int* readFd,bool track=true){
- Obj helper=proxyHelper();if(!helper){if(why)*why=str(T("The proxy bridge is missing from AppDeck.app. Reinstall AppDeck.","В AppDeck.app нет моста прокси. Переустановите AppDeck."));return nullptr;}
+Obj proxySpawn(const char* mode,Obj config,Obj* why,Obj* writer,int* readFd,bool track=true,bool vless=false){
+ Obj helper=proxyHelper(vless);if(!helper){if(why)*why=str(vless?T("The VLESS bridge is missing from AppDeck.app. Reinstall AppDeck.","В AppDeck.app нет моста VLESS. Переустановите AppDeck."):T("The proxy bridge is missing from AppDeck.app. Reinstall AppDeck.","В AppDeck.app нет моста прокси. Переустановите AppDeck."));return nullptr;}
  Obj in=send(cls("NSPipe"),"pipe"),out=send(cls("NSPipe"),"pipe");Obj task=make("NSTask");if(!in||!out||!task){if(task)drop(task);return nullptr;}
  send<void>(task,"setExecutableURL:",send(cls("NSURL"),"fileURLWithPath:",helper));send<void>(task,"setArguments:",send(cls("NSArray"),"arrayWithObject:",str(mode)));
  send<void>(task,"setEnvironment:",dict());send<void>(task,"setStandardInput:",in);send<void>(task,"setStandardOutput:",out);send<void>(task,"setStandardError:",send(cls("NSFileHandle"),"fileHandleWithNullDevice"));
  Obj error=nullptr;if(!send<bool>(task,"launchAndReturnError:",&error)){drop(task);if(why)*why=str(T("The proxy bridge did not start.","Мост прокси не запустился."));return nullptr;}
  Obj w=send(in,"fileHandleForWriting");int wfd=send<int>(w,"fileDescriptor");fcntl(wfd,73,1); // F_SETNOSIGPIPE: a bridge that died must not take AppDeck down
- const char* bytes=utf8(config);deck::Size n=strlen(bytes);write(wfd,bytes,n);
+ const char* bytes=utf8(config);deck::Size n=strlen(bytes),written=0;
+ while(written<n){long result=write(wfd,bytes+written,n-written);if(result<0&&errno==EINTR)continue;if(result<=0)break;written+=(deck::Size)result;}
+ if(written!=n){send<void>(w,"closeFile");if(send<bool>(task,"isRunning"))send<void>(task,"terminate");drop(task);if(why)*why=str(T("The bridge did not accept its settings.","Мост не принял настройки."));return nullptr;}
  *writer=w;*readFd=send<int>(send(out,"fileHandleForReading"),"fileDescriptor");
  if(track){add(proxyTasks,task);drop(task);}else autoRelease(task); // tracked tasks are reaped on the main thread
  return task;
 }
 // A bridge serving one window (or AppDeck's own limit probes): {task, writer, port}.
 Obj proxyServe(Obj x,Obj* why){
- Obj config=proxyConfig(x,why);if(!config)return nullptr;Obj writer=nullptr;int rfd=-1;Obj task=proxySpawn("serve",config,why,&writer,&rfd);if(!task)return nullptr;
+ Obj config=proxyConfig(x,why);if(!config)return nullptr;Obj writer=nullptr;int rfd=-1;Obj task=proxySpawn("serve",config,why,&writer,&rfd,true,proxyIsVless(x));if(!task)return nullptr;
  char buf[128];deck::Size used=0;buf[0]=0;double deadline=usageUptime()+5;
  while(!strchr(buf,'\n')&&usageFill(rfd,buf,sizeof buf,used,deadline))buf[used]=0;
  int port=0;if(deck::prefix(buf,"port "))for(const char* p=buf+5;*p>='0'&&*p<='9';++p)port=port*10+(*p-'0');
@@ -130,14 +149,15 @@ void proxyForget(Obj x){const char* key=utf8(get(x,"id"));Obj b=get(proxyProbeBr
 void proxyReap(){for(UInt i=count(proxyTasks);i>0;--i)if(!send<bool>(at(proxyTasks,i-1),"isRunning"))send<void>(proxyTasks,"removeObjectAtIndex:",i-1);}
 // Limit probes of a profile behind a proxy go through it too; false = the proxy is unavailable (cached numbers stay).
 bool usageProxy(Obj p,Obj env){
- Obj x=proxyFor(p);if(!x&&!truth(get(p,"proxyRequired")))return true;Obj why=nullptr;int port=x?proxyProbePort(x,&why):0;
+ Obj x=proxyFor(p);if(!x&&!truth(get(p,"proxyRequired"))&&!(proxiesDamaged&&proxyUnresolved(p)))return true;Obj why=nullptr;int port=x?proxyProbePort(x,&why):0;
  if(port<=0){Obj old=usageOf(p);Obj u=old?send(old,"mutableCopy"):make("NSMutableDictionary");put(u,"error",str("proxy"));put(u,"checked",real(nowUnix()));put(p,"usage",u);drop(u);return false;}
  proxyApplyEnv(env,port);return true;
 }
-// ---- checks, on a worker thread: `appdeck-proxy check` proves each address with a tunnel to api.openai.com:443 ----
+// Worker checks: the HTTP/SOCKS bridge opens CONNECT; VLESS additionally verifies a target TLS
+// handshake because a local VLESS dial alone cannot confirm remote authentication/destination reachability.
 void proxyCheckWorker(Obj,Sel,Obj request){
  Pool pool;Obj result=dict();put(result,"id",get(request,"id"));put(result,"rev",get(request,"rev"));Obj lines=array();put(result,"lines",lines);
- Obj writer=nullptr;int rfd=-1;Obj task=proxySpawn("check",get(request,"config"),nullptr,&writer,&rfd,false);
+ Obj writer=nullptr;int rfd=-1;Obj task=proxySpawn("check",get(request,"config"),nullptr,&writer,&rfd,false,truth(get(request,"vless")));
  if(task){send<void>(writer,"closeFile");char buf[4096];deck::Size used=0;double deadline=usageUptime()+32*40; // endpoints are probed one after another, up to ~40 s each
   while(usageFill(rfd,buf,sizeof buf,used,deadline)){}buf[used]=0;
   for(char* p=buf;*p;){char* e=strchr(p,'\n');if(e)*e=0;if(*p)add(lines,str(p));if(!e)break;p=e+1;}

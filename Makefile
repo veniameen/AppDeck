@@ -1,5 +1,5 @@
 # AppDeck — native macOS profile manager. Everything runs on macOS with the Command Line Tools.
-.PHONY: all app test test-claude-sessions test-claude-profiles test-claude-network test-usage-errors test-usage-cache test-claude-connection-ui verify install clean help
+.PHONY: all app test test-vless test-vless-ui test-claude-sessions test-claude-profiles test-claude-network test-usage-errors test-usage-cache test-claude-connection-ui verify install clean help
 
 all: app
 
@@ -8,6 +8,12 @@ app:        ## Build build/AppDeck.app (universal, ad-hoc signed)
 
 test:       ## Portable policy tests (ASan/UBSan) and the localization check
 	@scripts/test.sh
+
+test-vless: ## Offline VLESS/TLS/REALITY bridge and lifecycle fixtures
+	@bash scripts/test-vless.sh
+
+test-vless-ui: ## VLESS editor, persistence and EN/RU render fixtures
+	@bash scripts/test-vless-ui.sh
 
 test-claude-sessions: ## Offline macOS Claude session fixtures for both architectures; no apps launched
 	@bash scripts/test-claude-sessions.sh

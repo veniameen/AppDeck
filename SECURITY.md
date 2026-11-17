@@ -8,8 +8,9 @@ What AppDeck guarantees by design:
 
 - It never copies, links or edits another app's databases, and never reads, copies or shares `auth.json`, cookies, Keychain items or Electron user data.
 - It never modifies the bundles of the apps it manages and uses public macOS APIs only — no private WindowServer calls, no event taps, no screen recording.
-- It has no network client of its own and no telemetry. Account limits are asked from the apps' own tools (`codex app-server`, Claude Code in `--safe-mode`) with the profile's own data; AppDeck never sees tokens.
-- Proxies are opt-in. For a profile that uses one, the local bridge `appdeck-proxy` relays that app's traffic to the proxy you configured; it listens on `127.0.0.1` only and exits with the window. Proxy passwords are stored in `proxies.plist` (mode 0600) in AppDeck's data folder — like the apps' own `auth.json`, not in the Keychain — and are passed to the bridge through a pipe. Any program running as your user on this Mac can use a bridge while it runs.
+- The manager makes no account API requests itself and has no telemetry. Account limits are asked from the apps' own tools (`codex app-server`, Claude Code in `--safe-mode`) with the profile's own data; AppDeck never reads account tokens. Network helpers relay selected profiles' traffic and explicit connection checks.
+- Proxies are opt-in. A selected profile gets a loopback bridge: `appdeck-proxy` for HTTP/SOCKS5 or `appdeck-vless` for VLESS TCP with TLS/REALITY. Each listens on `127.0.0.1` only and exits with its watched process. Proxy passwords and VLESS links are stored only in `proxies.plist` (mode 0600) and sent to helpers through stdin, never arguments or environment. Any program running as your user on this Mac can use a bridge while it runs.
+- VLESS changes application proxy settings, not system routes, DNS or VPN configuration. It has no direct fallback inside the bridge and does not accept insecure certificate options, but applications and helpers that ignore proxy settings remain outside that route. This is not an OS firewall or a guarantee of complete IP/DNS isolation.
 - Profile folders are private (mode 0700), generated settings files 0600; symbolic links are refused where AppDeck writes.
 - Diagnostics exclude tokens, configuration contents and account addresses.
 

@@ -30,10 +30,10 @@ AppDeck is a small native macOS app for people who work in the same desktop app 
 - **Local Claude Code sessions.** Find saved Desktop conversations by project and choose a shared-mode profile to continue one. Clean profiles stay outside the bridge. Claude creates its own session entry; AppDeck preserves account storage and does not copy transcripts. Other Desktop instances must be closed for a shared session. Currently gated to inspected Claude Desktop 2.31226.1; real import remains an acceptance check.
 - **Usage limits at a glance.** The weekly, 5-hour and per-model windows of every Codex and Claude account, asked from the apps' own tools. Meters stay neutral while there is room, turn amber below 25 % and red below 10 %; the account with the most headroom stands out in the side panel.
 - **Side panel.** Press <kbd>⌃</kbd><kbd>⌥</kbd><kbd>Space</kbd> in any app and switch accounts without opening the main window.
-- **Proxy per profile.** Start any profile through an HTTP or SOCKS5 proxy with a login and password — for example past the VPN of your router. Set a default for all profiles or choose one per profile; a private local bridge adds the credentials, fails over along your address list and keeps QUIC and WebRTC inside the proxy.
+- **Proxy per profile.** Choose HTTP, SOCKS5 or VLESS (unreleased) separately for each profile, or set a shared default. HTTP/SOCKS5 supports credentials and an address list; VLESS accepts one `vless://` link using TCP with TLS or REALITY. A private local bridge serves each selected profile. Chromium QUIC and WebRTC restrictions stay enabled; native helpers can have different networking.
 - **Window tools.** Arrange four windows in a 2×2 grid and put them back, hide every profile at once, reopen a window that was closed with the red button.
 - **Graphite glass.** A dark translucent interface in the manner of macOS 26: a floating sidebar, one bone-white ink, capsule controls of one height, colour only for state and for each profile's badge.
-- **Native and light.** A C++17 app on public AppKit and Objective-C runtime APIs, plus a tiny libSystem-only proxy bridge. No Electron, no WebView, no network client of its own, no telemetry. A universal binary for macOS 13 and later.
+- **Native interface.** A C++17 app on public AppKit and Objective-C runtime APIs, plus separate HTTP/SOCKS5 and VLESS helpers. No Electron, no WebView, no telemetry. The app and helpers are universal binaries for macOS 13 and later; the VLESS helper embeds a pinned Go engine.
 - **English and Russian.** Follow the system language or choose one in AppDeck. Menus, the main window, side panel and date captions update immediately; the choice survives a restart.
 
 ## The side panel
@@ -76,7 +76,7 @@ The original app is never copied or modified. Supported apps can also use **Ordi
 
 ## Install
 
-**Build from source** — needs macOS 13+ and the Apple Command Line Tools (`xcode-select --install`), nothing else:
+**Build from source** — needs macOS 13+, the Apple Command Line Tools (`xcode-select --install`), Python 3 and Go 1.25.5 or later. The first build downloads the pinned VLESS engine dependencies; downloaded app bundles do not need Go:
 
 ```sh
 git clone https://github.com/veniameen/AppDeck.git
@@ -87,6 +87,8 @@ make install          # builds build/AppDeck.app and copies it to /Applications
 If AppDeck is already running, quit it first (**AppDeck → Quit AppDeck**); your profile windows keep running and AppDeck reconnects to them.
 
 **Or download** `AppDeck.zip` from [Releases](https://github.com/veniameen/AppDeck/releases), unzip it and move `AppDeck.app` to Applications with Finder before the first launch.
+
+**Unreleased VLESS support** is available from source or the **AppDeck** artifact of a successful `main` run in [CI](https://github.com/veniameen/AppDeck/actions/workflows/ci.yml). Current Releases downloads do not include VLESS.
 
 AppDeck is signed ad hoc, not with a Developer ID, and is not notarized. On first launch macOS may refuse to open it: open **System Settings → Privacy & Security** and click **Open Anyway** for AppDeck. Please do not disable Gatekeeper.
 
@@ -101,6 +103,8 @@ The [user guide](docs/USER_GUIDE.md) explains every option; it is also available
 
 For an ordinary app, **No proxy** is the default. Choose a proxy on its card if needed. Some native apps ignore proxy environment settings: in AnyDesk, open **Settings → Connection → HTTP-Proxy** and enter the host and port from AppDeck's **Copy address**. Launch with a proxy first; the local address changes after each launch and lasts while the app's process runs. Routing and background services are not automatically verified. See [AnyDesk's proxy settings](https://support.anydesk.com/docs/settings).
 
+For VLESS in an unreleased source/CI build, open **Proxy → Add proxy**, choose **VLESS**, paste one supported `vless://` link and save it. Select it in the intended profile's **Proxy** menu, then launch or restart that profile. Leave other profiles on **No proxy** if they should use their existing connection. AppDeck does not enable TUN, change system routes or DNS settings, or require administrator access for VLESS. Other applications keep their current network configuration. See the [proxy guide](docs/USER_GUIDE.md#proxy).
+
 ## Keyboard shortcuts
 
 | Shortcut | Action |
@@ -114,8 +118,8 @@ The shortcuts are registered hot keys: no Input Monitoring permission is needed.
 ## Privacy and safety
 
 - AppDeck never copies, links or edits the managed apps' databases and never reads or shares `auth.json`, cookies or Keychain items. Desktop data stays in each profile's private folder; vendor use of the macOS Keychain remains OS-scoped.
-- It has no network client of its own. Codex limits come from the app's own `codex app-server` (`account/read`, `account/rateLimits/read`); Claude limits from Claude Code's `get_usage` request in `--safe-mode`, which sends no message to the model. AppDeck never sees a token.
-- A proxy is opt-in: its passwords stay in a private file (mode 0600) and reach the local bridge through a pipe; the bridge listens on `127.0.0.1` only and exits with the window it serves.
+- The manager does not make account API requests itself. Codex limits come from the app's own `codex app-server` (`account/read`, `account/rateLimits/read`); Claude limits from Claude Code's `get_usage` request in `--safe-mode`, which sends no message to the model. The network helpers relay selected profiles' traffic and explicit connection checks; AppDeck never reads account tokens.
+- A proxy is opt-in: passwords and VLESS links stay in `proxies.plist` (mode 0600) and reach the local bridge through stdin, never process arguments or environment variables. Each bridge listens on `127.0.0.1` only and exits with the process it serves.
 - Limits are asked rarely: each account at most once an hour, with at least five minutes between two accounts; **Limits** asks now.
 - Everything it keeps is in `~/Library/Application Support/AppDeck`. Diagnostics contain no tokens, configuration contents or account addresses.
 - Profiles are separated by data, not sandboxed: every app still runs as your macOS user. See [SECURITY.md](SECURITY.md).
@@ -123,6 +127,7 @@ The shortcuts are registered hot keys: no Input Monitoring permission is needed.
 ## Limitations
 
 - Ordinary launch keeps the app's existing data and sign-in. Proxy support depends on the application; native apps may require manual setup, and a background service that outlives the app needs its own configuration.
+- VLESS uses the same application proxy settings as HTTP/SOCKS5. The selected VLESS helper has no direct fallback, but this is not an OS firewall: native helpers, MCP servers, SSH, VMs and external browsers can bypass application proxy settings. Initial VLESS support is TCP with TLS or REALITY; WebSocket, gRPC, subscriptions and system TUN are not supported.
 - Not notarized; local builds are signed ad hoc, so macOS may ask for Accessibility again after an update.
 - Codex's `app-server` protocol and desktop project cache are internal and may change with a new `ChatGPT.app`; AppDeck then shows “no data” or skips the sync instead of guessing.
 - Some scenarios are not verified yet — for example several different real accounts sharing history at the same time, multi-monitor setups and Intel hardware. The current status is in [docs/TESTING.md](docs/TESTING.md).
@@ -149,7 +154,7 @@ The second command runs a separate demo instance (use `'(ru)'` for Russian); the
 ```
 src/        C++17 sources: main.cpp and its headers; pure policy headers are unit-tested
 tests/      portable tests, macOS smoke and integration tests
-tools/      help page, localization check, bundle verifier, sandbox and demo data
+tools/      help page, localization check, bundle verifier, sandbox/demo data, Go VLESS helper
 scripts/    build, test, verify and install
 assets/     Info.plist, icon, localized Info.plist strings
 docs/       user guide, architecture, sync design, testing, screenshots
@@ -159,4 +164,4 @@ Read [CONTRIBUTING.md](CONTRIBUTING.md) and the hard rules in [AGENTS.md](AGENTS
 
 ## License
 
-[MIT](LICENSE). AppDeck is an independent project, not affiliated with OpenAI or Anthropic; ChatGPT, Codex and Claude are trademarks of their owners.
+The native AppDeck manager and HTTP/SOCKS5 bridge are [MIT](LICENSE). The separate `appdeck-vless` executable is [GPL-3.0-or-later](tools/vless-helper/LICENSE) and incorporates sing-box and its dependencies. Every app bundle includes its license, third-party notices and complete corresponding source under `Contents/Resources/vless/`; see [the helper notices](tools/vless-helper/THIRD_PARTY_NOTICES.md). AppDeck is an independent project, not affiliated with OpenAI or Anthropic; ChatGPT, Codex and Claude are trademarks of their owners.

@@ -3,58 +3,111 @@
 Obj proxyTrim(Obj s){return send(s,"stringByTrimmingCharactersInSet:",send(cls("NSCharacterSet"),"whitespaceAndNewlineCharacterSet"));}
 // One line on the row: scheme, number of addresses and what the last check found.
 Obj proxySummary(Obj x){
- Int n=0;Obj lines=get(x,"lines");for(UInt i=0;i<count(lines);++i){deck::ProxyEndpoint e;if(deck::proxyParse(utf8(at(lines,i)),e))++n;}
- Obj s=cat(str(same(get(x,"scheme"),str("socks5"))?"SOCKS5":"HTTP"),formatInt(n==1?T(" · 1 address"," · 1 адрес"):T(" · %ld addresses"," · адресов: %ld"),n));
+ Obj s=nullptr;if(proxyIsVless(x)){deck::VlessEndpoint endpoint{};Obj addresses=get(x,"lines");Obj uri=count(addresses)==1?at(addresses,0):nullptr;
+  bool valid=uri&&deck::vlessParse(utf8(uri),send<UInt>(uri,"lengthOfBytesUsingEncoding:",(UInt)4),endpoint)==deck::VlessParseError::Ok;
+  s=str(valid?(endpoint.security==deck::VlessSecurity::Reality?T("VLESS · REALITY · TCP","VLESS · REALITY · TCP"):T("VLESS · TLS · TCP","VLESS · TLS · TCP")):T("VLESS · invalid link","VLESS · некорректная ссылка"));
+ }else{Int n=0;Obj addresses=get(x,"lines");for(UInt i=0;i<count(addresses);++i){deck::ProxyEndpoint e;if(deck::proxyParse(utf8(at(addresses,i)),e))++n;}
+  s=cat(str(same(get(x,"scheme"),str("socks5"))?"SOCKS5":"HTTP"),formatInt(n==1?T(" · 1 address"," · 1 адрес"):T(" · %ld addresses"," · адресов: %ld"),n));}
  if(proxyChecking&&send<bool>(proxyChecking,"containsObject:",get(x,"id")))return cat(s,str(T(" · checking…"," · проверяю…")));
  Obj c=get(x,"check");if(!c)return cat(s,str(T(" · not checked yet"," · ещё не проверялся")));
  Int ok=integer(get(c,"ok")),total=integer(get(c,"total"));Obj result;
  if(ok>0){char b[160];snprintf(b,sizeof b,T(" · works: %ld of %ld, fastest %ld ms"," · работает: %ld из %ld, быстрее всего %ld мс"),ok,total,integer(get(c,"fastest")));result=str(b);}
- else result=str(truth(get(c,"auth"))?T(" · login or password rejected"," · логин или пароль отклонены"):T(" · no address answers"," · ни один адрес не отвечает"));
+ else result=str(proxyIsVless(x)?T(" · connection not confirmed"," · соединение не подтверждено"):truth(get(c,"auth"))?T(" · login or password rejected"," · логин или пароль отклонены"):T(" · no address answers"," · ни один адрес не отвечает"));
  return cat(cat(cat(s,result),str(" · ")),usageAgeText(send<double>(get(c,"at"),"doubleValue")));
 }
-// The editor: name, type, addresses (one per line, as the provider gives them) and an optional common login.
+Obj proxyEditorFields=nullptr;
+void proxyKindUpdate(Obj fields){
+ bool vless=send<Int>(get(fields,"kind"),"indexOfSelectedItem")==2,wasVless=truth(get(fields,"wasVless"));
+ Obj user=get(fields,"user"),pass=get(fields,"pass");
+ if(vless&&!wasVless){put(fields,"httpUser",send(user,"stringValue"));put(fields,"httpPass",send(pass,"stringValue"));send<void>(user,"setStringValue:",str(""));send<void>(pass,"setStringValue:",str(""));}
+ if(!vless&&wasVless){send<void>(user,"setStringValue:",get(fields,"httpUser")?get(fields,"httpUser"):str(""));send<void>(pass,"setStringValue:",get(fields,"httpPass")?get(fields,"httpPass"):str(""));}
+ put(fields,"wasVless",boolean(vless));send<void>(user,"setEnabled:",!vless);send<void>(pass,"setEnabled:",!vless);
+ send<void>(user,"setPlaceholderString:",str(vless?T("From the VLESS link","Из ссылки VLESS"):T("for addresses without their own","для адресов без своего")));
+ send<void>(pass,"setPlaceholderString:",str(vless?T("From the VLESS link","Из ссылки VLESS"):""));
+ send<void>(get(fields,"addressLabel"),"setStringValue:",str(vless?T("VLESS link","Ссылка VLESS"):T("Addresses","Адреса")));
+ send<void>(get(fields,"hint"),"setStringValue:",str(vless?T("Paste one vless:// link.\nTCP with TLS or REALITY.\nThe link already contains the credentials.","Вставьте одну ссылку vless://.\nTCP с TLS или REALITY.\nДанные подключения уже находятся в ссылке."):T("One address per line:\nhost:port or host:port:login:password.\nThe first address that answers is used.","По одному адресу в строке:\nhost:port или host:port:логин:пароль.\nИспользуется первый отвечающий адрес.")));
+ send<void>(get(fields,"credentialHint"),"setStringValue:",str(vless?T("Login and Password are taken from the link.\nOnly this saved connection is changed.","Данные подключения берутся из ссылки.\nМеняется только это сохранённое подключение."):T("Optional common credentials for addresses\nthat do not include their own login and password.","Общие данные для адресов, в которых\nне указаны свои логин и пароль.")));
+}
+void proxyKindChangedAction(Obj,Sel,Obj){if(proxyEditorFields)proxyKindUpdate(proxyEditorFields);}
+// Share links are visible only in this editor; summaries and errors never expose them.
+Obj proxyEditorForm(Obj name,Obj text,Obj user,Obj pass,Int scheme,Obj fields){
+ Obj box=send(send((Obj)deckViewClass,"alloc"),"initWithFrame:",rect(0,0,440,350));
+ label(box,T("Name","Название"),rect(0,4,110,18));Obj nameField=send(send(cls("NSTextField"),"alloc"),"initWithFrame:",rect(116,0,324,24));send<void>(nameField,"setStringValue:",name);send<void>(box,"addSubview:",nameField);put(fields,"name",nameField);drop(nameField);
+ label(box,T("Type","Тип"),rect(0,38,110,18));const char* kinds[]={T("HTTP (CONNECT)","HTTP (CONNECT)"),T("SOCKS5","SOCKS5"),T("VLESS (TLS / REALITY)","VLESS (TLS / REALITY)")};Obj kind=popup(box,rect(114,32,326,28),kinds,3,scheme);put(fields,"kind",kind);send<void>(kind,"setTarget:",controller);send<void>(kind,"setAction:",sel("proxyKindChanged:"));
+ put(fields,"addressLabel",lines(box,"",rect(0,72,108,38),12,muted(),18));
+ Obj scroll=send(send(cls("NSScrollView"),"alloc"),"initWithFrame:",rect(116,70,324,96));send<void>(scroll,"setHasVerticalScroller:",true);send<void>(scroll,"setBorderType:",(UInt)2);
+ Obj view=send(send(cls("NSTextView"),"alloc"),"initWithFrame:",rect(0,0,320,96));send<void>(view,"setRichText:",false);send<void>(view,"setFont:",codeFont(12,0));
+ for(const char* off:{"setAutomaticQuoteSubstitutionEnabled:","setAutomaticDashSubstitutionEnabled:","setAutomaticTextReplacementEnabled:","setAutomaticSpellingCorrectionEnabled:","setContinuousSpellCheckingEnabled:"})send<void>(view,off,false);
+ send<void>(view,"setString:",text);send<void>(view,"setAutoresizingMask:",(UInt)2);send<void>(scroll,"setDocumentView:",view);put(fields,"text",view);drop(view);send<void>(box,"addSubview:",scroll);drop(scroll);
+ put(fields,"hint",lines(box,"",rect(116,170,324,58),11,faint(),17));
+ label(box,T("Login","Логин"),rect(0,246,110,18));Obj userField=send(send(cls("NSTextField"),"alloc"),"initWithFrame:",rect(116,242,324,24));send<void>(userField,"setStringValue:",user);send<void>(userField,"setPlaceholderString:",str(T("HTTP / SOCKS5 only","Только HTTP / SOCKS5")));send<void>(box,"addSubview:",userField);put(fields,"user",userField);drop(userField);
+ label(box,T("Password","Пароль"),rect(0,280,110,18));Obj passField=send(send(cls("NSSecureTextField"),"alloc"),"initWithFrame:",rect(116,276,324,24));send<void>(passField,"setStringValue:",pass);send<void>(box,"addSubview:",passField);put(fields,"pass",passField);drop(passField);
+ put(fields,"credentialHint",lines(box,"",rect(116,310,324,38),11,faint(),17));proxyKindUpdate(fields);
+ return box;
+}
+const char* proxyVlessParseProblem(deck::VlessParseError error){
+ using Error=deck::VlessParseError;
+ switch(error){
+  case Error::TooLong:return T("The VLESS link or one of its fields is too long.","Ссылка VLESS или одно из её полей слишком длинное.");
+  case Error::RealityKey:return T("REALITY requires a valid 32-byte public key (pbk) in base64url format.","Для REALITY нужен корректный открытый ключ pbk: 32 байта в формате base64url.");
+  case Error::ShortId:return T("The REALITY short ID (sid) must contain 0 to 8 bytes written as pairs of hexadecimal digits.","Короткий ID REALITY (sid) должен содержать от 0 до 8 байт, записанных парами шестнадцатеричных цифр.");
+  case Error::ServerName:return T("Use a valid DNS name for sni. REALITY requires an explicit sni.","Укажите корректное DNS-имя в sni. Для REALITY параметр sni обязателен.");
+  case Error::DuplicateOption:return T("The VLESS link repeats a connection option. Keep each option only once.","В ссылке VLESS повторяется параметр подключения. Каждый параметр должен встречаться один раз.");
+  case Error::Security:case Error::Transport:case Error::UnsupportedOption:case Error::Encryption:case Error::Flow:case Error::Fingerprint:case Error::IncompatibleOption:
+   return T("Only VLESS TCP with TLS or REALITY is supported. Unsupported options and insecure certificate settings are rejected.","Поддерживается только VLESS TCP с TLS или REALITY. Неподдерживаемые параметры и отключение проверки сертификатов не допускаются.");
+  default:return T("The VLESS link is malformed. Check its UUID, server address, port and percent-encoded values.","Некорректная ссылка VLESS. Проверьте UUID, адрес сервера, порт и значения с процентным кодированием.");
+ }
+}
+Obj proxyEditorProblem(Obj name,Obj text,Obj user,Obj pass,Int scheme,Obj* resultLines){
+ *resultLines=nullptr;if(!send<UInt>(name,"length")||send<UInt>(name,"length")>64)return str(T("Enter a name of 1 to 64 characters.","Введите название от 1 до 64 символов."));
+ if(scheme<0||scheme>2)return str(T("Choose a supported connection type.","Выберите поддерживаемый тип подключения."));
+ Obj addresses=array(),bad=array(),raw=send(text,"componentsSeparatedByCharactersInSet:",send(cls("NSCharacterSet"),"newlineCharacterSet"));
+ for(UInt i=0;i<count(raw);++i){Obj line=proxyTrim(at(raw,i));if(!send<UInt>(line,"length"))continue;
+  if(scheme==2)add(addresses,line);else{deck::ProxyEndpoint endpoint;if(deck::proxyParse(utf8(line),endpoint))add(addresses,line);else add(bad,formatInt("%ld",(Int)i+1));}}
+ if(scheme==2){
+  if(count(addresses)!=1)return str(T("Paste exactly one vless:// link.","Вставьте ровно одну ссылку vless://."));
+  if(send<UInt>(user,"length")||send<UInt>(pass,"length"))return str(T("Leave Login and Password empty for VLESS; its link contains the credentials.","Для VLESS оставьте логин и пароль пустыми: данные подключения находятся в ссылке."));
+  Obj uri=at(addresses,0);deck::VlessEndpoint endpoint;auto error=deck::vlessParse(utf8(uri),send<UInt>(uri,"lengthOfBytesUsingEncoding:",(UInt)4),endpoint);
+  if(error!=deck::VlessParseError::Ok)return str(proxyVlessParseProblem(error));
+ }else{
+  if(count(bad))return cat(str(T("These lines are not host:port or host:port:login:password: ","Эти строки не в формате host:port или host:port:логин:пароль: ")),send(bad,"componentsJoinedByString:",str(", ")));
+  if(!count(addresses))return str(T("Add at least one address.","Добавьте хотя бы один адрес."));
+  if(count(addresses)>32)return str(T("At most 32 addresses.","Не больше 32 адресов."));
+  if(send<UInt>(user,"lengthOfBytesUsingEncoding:",(UInt)4)>255||send<UInt>(pass,"lengthOfBytesUsingEncoding:",(UInt)4)>255)return str(T("The login and the password are limited to 255 bytes (a non-Latin letter takes two).","Логин и пароль — не длиннее 255 байт (буква кириллицы занимает два)."));
+  if(send<UInt>(user,"length")&&!send<UInt>(pass,"length"))return str(T("Enter the password for the common login, or leave both empty.","Введите пароль для общего логина или оставьте оба поля пустыми."));
+ }
+ *resultLines=addresses;return nullptr;
+}
+// Keep live routes/check revisions intact until the private store has been saved successfully.
+bool proxyCommitEdit(Obj existing,Obj name,Int scheme,Obj addresses,Obj user,Obj pass,bool (*persist)()=proxySave){
+ Obj target=existing?existing:dict(),previous=existing?send(existing,"copy"):nullptr;
+ if(!existing){put(target,"id",uuid());add(proxies,target);}
+ put(target,"name",name);put(target,"scheme",str(scheme==2?"vless":scheme==1?"socks5":"http"));put(target,"lines",addresses);
+ if(scheme!=2&&send<UInt>(user,"length")){put(target,"user",user);put(target,"pass",pass);}else{erase(target,"user");erase(target,"pass");}
+ erase(target,"check");put(target,"rev",uuid());
+ if(!persist()){if(existing)send<void>(target,"setDictionary:",previous);else send<void>(proxies,"removeObjectIdenticalTo:",target);drop(previous);return false;}
+ drop(previous);proxyForget(target);note("Proxy saved; credentials stay in proxies.plist (0600).");return true;
+}
+// The editor accepts ordinary proxy endpoints or one VLESS share link.
 bool proxyEdit(Obj x){
  if(previewMode)return false;frontForModal();
  Obj name=x?get(x,"name"):formatInt(T("Proxy %ld","Прокси %ld"),(Int)count(proxies)+1);
  Obj text=x?send(get(x,"lines"),"componentsJoinedByString:",str("\n")):str("");
  Obj user=x&&isClass(get(x,"user"),"NSString")?get(x,"user"):str(""),pass=x&&isClass(get(x,"pass"),"NSString")?get(x,"pass"):str("");
- Int scheme=x&&same(get(x,"scheme"),str("socks5"))?1:0;
+ Int scheme=proxyIsVless(x)?2:x&&same(get(x,"scheme"),str("socks5"))?1:0;
  for(;;){
   Obj a=make("NSAlert");send<void>(a,"setMessageText:",str(x?T("Edit proxy","Изменить прокси"):T("Add proxy","Добавить прокси")));
-  send<void>(a,"setInformativeText:",str(T("AppDeck starts a local bridge for each window of a profile that uses this proxy; the first address that answers is used.","Для каждого окна профиля с этим прокси AppDeck запускает локальный мост; используется первый отвечающий адрес.")));
-  Obj box=send(send((Obj)deckViewClass,"alloc"),"initWithFrame:",rect(0,0,440,262));
-  label(box,T("Name","Название"),rect(0,4,110,18));Obj nameField=send(send(cls("NSTextField"),"alloc"),"initWithFrame:",rect(116,0,324,24));send<void>(nameField,"setStringValue:",name);send<void>(box,"addSubview:",nameField);drop(nameField);
-  label(box,T("Type","Тип"),rect(0,38,110,18));const char* kinds[]={"HTTP (CONNECT)","SOCKS5"};Obj kind=popup(box,rect(114,32,200,28),kinds,2,scheme);
-  label(box,T("Addresses","Адреса"),rect(0,72,110,18));
-  Obj scroll=send(send(cls("NSScrollView"),"alloc"),"initWithFrame:",rect(116,70,324,96));send<void>(scroll,"setHasVerticalScroller:",true);send<void>(scroll,"setBorderType:",(UInt)2);
-  Obj view=send(send(cls("NSTextView"),"alloc"),"initWithFrame:",rect(0,0,320,96));send<void>(view,"setRichText:",false);send<void>(view,"setFont:",codeFont(12,0));
-  for(const char* off:{"setAutomaticQuoteSubstitutionEnabled:","setAutomaticDashSubstitutionEnabled:","setAutomaticTextReplacementEnabled:","setAutomaticSpellingCorrectionEnabled:","setContinuousSpellCheckingEnabled:"})send<void>(view,off,false);
-  send<void>(view,"setString:",text);send<void>(view,"setAutoresizingMask:",(UInt)2);send<void>(scroll,"setDocumentView:",view);drop(view);send<void>(box,"addSubview:",scroll);drop(scroll);
-  label(box,T("One per line: host:port or host:port:login:password.","По одному в строке: host:port или host:port:логин:пароль."),rect(116,170,324,16),11,faint());
-  label(box,T("Login","Логин"),rect(0,202,110,18));Obj userField=send(send(cls("NSTextField"),"alloc"),"initWithFrame:",rect(116,198,324,24));send<void>(userField,"setStringValue:",user);send<void>(userField,"setPlaceholderString:",str(T("for addresses without their own","для адресов без своего")));send<void>(box,"addSubview:",userField);drop(userField);
-  label(box,T("Password","Пароль"),rect(0,236,110,18));Obj passField=send(send(cls("NSSecureTextField"),"alloc"),"initWithFrame:",rect(116,232,324,24));send<void>(passField,"setStringValue:",pass);send<void>(box,"addSubview:",passField);drop(passField);
+  send<void>(a,"setInformativeText:",str(T("Selected profiles send supported requests through a local proxy. VLESS uses the same profile settings; it does not enable a system VPN.","Выбранные профили отправляют поддерживаемые запросы через локальный прокси. VLESS использует те же настройки профиля и не включает системный VPN.")));
+  Obj fields=dict(),box=proxyEditorForm(name,text,user,pass,scheme,fields),nameField=get(fields,"name"),kind=get(fields,"kind"),view=get(fields,"text"),userField=get(fields,"user"),passField=get(fields,"pass");
   send<void>(a,"setAccessoryView:",box);send(a,"addButtonWithTitle:",str(T("Save","Сохранить")));send(a,"addButtonWithTitle:",str(T("Cancel","Отмена")));
   send<void>(send(a,"window"),"setInitialFirstResponder:",nameField);
-  bool accepted=send<Int>(a,"runModal")==1000;
+  proxyEditorFields=keep(fields);bool accepted=send<Int>(a,"runModal")==1000;drop(proxyEditorFields);proxyEditorFields=nullptr;
   name=proxyTrim(send(nameField,"stringValue"));text=autoRelease(send(send(view,"string"),"copy"));user=proxyTrim(send(userField,"stringValue"));pass=send(passField,"stringValue");scheme=send<Int>(kind,"indexOfSelectedItem");
   keep(name);keep(user);keep(pass);drop(box);drop(a);autoRelease(name);autoRelease(user);autoRelease(pass);
   if(!accepted)return false;
-  // Validate every line; report the ones that do not parse (without echoing passwords).
-  Obj lines=array(),bad=array();Obj raw=send(text,"componentsSeparatedByCharactersInSet:",send(cls("NSCharacterSet"),"newlineCharacterSet"));
-  for(UInt i=0;i<count(raw);++i){Obj line=proxyTrim(at(raw,i));if(!send<UInt>(line,"length"))continue;deck::ProxyEndpoint e;if(deck::proxyParse(utf8(line),e))add(lines,line);else add(bad,formatInt("%ld",(Int)i+1));}
-  const char* problem=nullptr;bool listBad=false;
-  if(!send<UInt>(name,"length")||send<UInt>(name,"length")>64)problem=T("Enter a name of 1 to 64 characters.","Введите название от 1 до 64 символов.");
-  else if(count(bad)){problem=T("These lines are not host:port or host:port:login:password: ","Эти строки не в формате host:port или host:port:логин:пароль: ");listBad=true;}
-  else if(!count(lines))problem=T("Add at least one address.","Добавьте хотя бы один адрес.");
-  else if(count(lines)>32)problem=T("At most 32 addresses.","Не больше 32 адресов.");
-  else if(send<UInt>(user,"lengthOfBytesUsingEncoding:",(UInt)4)>255||send<UInt>(pass,"lengthOfBytesUsingEncoding:",(UInt)4)>255)problem=T("The login and the password are limited to 255 bytes (a non-Latin letter takes two).","Логин и пароль — не длиннее 255 байт (буква кириллицы занимает два).");
-  else if(send<UInt>(user,"length")&&!send<UInt>(pass,"length"))problem=T("Enter the password for the common login, or leave both empty.","Введите пароль для общего логина или оставьте оба поля пустыми.");
-  if(problem){showError(str(T("The proxy was not saved","Прокси не сохранён")),listBad?cat(str(problem),send(bad,"componentsJoinedByString:",str(", "))):str(problem));continue;}
-  Obj target=x;if(!target){target=dict();put(target,"id",uuid());add(proxies,target);}
-  put(target,"name",name);put(target,"scheme",str(scheme==1?"socks5":"http"));put(target,"lines",lines);
-  if(send<UInt>(user,"length")){put(target,"user",user);put(target,"pass",pass);}else{erase(target,"user");erase(target,"pass");}
-  erase(target,"check");put(target,"rev",uuid());proxyForget(target);proxySave(); // a check still running for the old addresses is ignored
-  note("Proxy saved; credentials stay in proxies.plist (0600).");return true;
+  Obj addresses=nullptr;Obj problem=proxyEditorProblem(name,text,user,pass,scheme,&addresses);
+  if(problem){showError(str(T("The proxy was not saved","Прокси не сохранён")),problem);continue;}
+  if(proxyCommitEdit(x,name,scheme,addresses,user,pass))return true;
  }
 }
 void proxyAddAction(Obj,Sel,Obj){if(proxyEdit(nullptr)){buildUI();buildMenus();}}
@@ -71,7 +124,7 @@ void proxyRemoveAction(Obj,Sel,Obj sender){
 void proxyCheckAction(Obj,Sel,Obj sender){
  Obj x=proxyFromSender(sender);if(!x||send<bool>(proxyChecking,"containsObject:",get(x,"id")))return;Obj why=nullptr;Obj config=proxyConfig(x,&why);
  if(!config){showError(str(T("Nothing to check","Нечего проверять")),why);return;}
- Obj request=dict();put(request,"id",get(x,"id"));put(request,"config",config);put(request,"rev",get(x,"rev")?get(x,"rev"):str(""));send<void>(proxyChecking,"addObject:",get(x,"id"));
+ Obj request=dict();put(request,"id",get(x,"id"));put(request,"config",config);put(request,"vless",boolean(proxyIsVless(x)));put(request,"rev",get(x,"rev")?get(x,"rev"):str(""));send<void>(proxyChecking,"addObject:",get(x,"id"));
  send<void>(cls("NSThread"),"detachNewThreadSelector:toTarget:withObject:",sel("proxyCheckWorker:"),controller,request);buildUI();
 }
 // "ok <i> <ms>" / "auth <i>" / "fail <i> <reason>" per address → a small record on the proxy.
@@ -122,7 +175,7 @@ void copyAppProxyAction(Obj,Sel,Obj sender){
 // The Proxy page.
 void buildProxyPage(double x,double w,double footY){
  double titleW=headerButtons(x+w,{{T("Add proxy","Добавить прокси"),"proxyAdd:","plus",true,nullptr}})-x-16;
- pageHeader(x,w,T("NETWORK","СЕТЬ"),str(T("Proxy","Прокси")),str(T("Route profiles through an HTTP or SOCKS5 proxy — for example past the VPN of your router.","Направляйте профили через HTTP- или SOCKS5-прокси — например, в обход VPN роутера.")),titleW);
+ pageHeader(x,w,T("NETWORK","СЕТЬ"),str(T("Proxy","Прокси")),str(T("HTTP, SOCKS5 or VLESS connections for individual profiles.","HTTP, SOCKS5 или VLESS отдельно для каждого профиля.")),titleW);
  if(proxiesDamaged){Obj warn=label(rootView,T("proxies.plist could not be read: AppDeck keeps the file and does not save changes. Profiles that use a proxy from it are not started.","proxies.plist не прочитан: AppDeck сохраняет файл и не записывает изменения. Профили, использующие прокси из него, не запускаются."),rect(x,116,w,16),12,warnColor(),.23);send<void>(warn,"setLineBreakMode:",(Int)4);}
  caption(rootView,T("FOR ALL PROFILES","ДЛЯ ВСЕХ ПРОФИЛЕЙ"),rect(x,138,w,14));
  Obj box=card(rootView,rect(x,160,w,settingRowH),16);Obj d=proxyDefault();
@@ -133,7 +186,7 @@ void buildProxyPage(double x,double w,double footY){
  caption(rootView,T("PROXIES","ПРОКСИ"),rect(x,160+settingRowH+24,w,14));double top=160+settingRowH+46;
  if(!count(proxies)){Obj c=card(rootView,rect(x,top,w,104),16);iconTile(c,rect(20,24,40,40),"network");
   label(c,T("No proxies yet","Прокси пока нет"),rect(76,28,w-96,20),15,ink(),.3);
-  label(c,T("Add the addresses your provider gave you — host:port or host:port:login:password, one per line.","Добавьте адреса от провайдера — host:port или host:port:логин:пароль, по одному в строке."),rect(76,52,w-96,18),13,muted(),0);}
+  label(c,T("Add your provider's HTTP / SOCKS5 addresses or one vless:// link.","Добавьте HTTP / SOCKS5-адреса провайдера или одну ссылку vless://."),rect(76,52,w-96,18),13,muted(),0);}
  else{double listH=count(proxies)*settingRowH,room=footY-16-top-44;Obj doc=scrollDocument(rootView,rect(x,top,w,listH<room?listH:room),listH);Obj list=card(doc,rect(0,0,w,listH),16);
   const char* checkTitle=T("Check","Проверить");const char* editTitle=T("Edit…","Изменить…");double cw=fitWidth(checkTitle,true),ew=fitWidth(editTitle,false);
   for(UInt i=0;i<count(proxies);++i){Obj x2=at(proxies,i);double y=i*settingRowH;if(i)settingDivider(list,y,w);
@@ -142,8 +195,8 @@ void buildProxyPage(double x,double w,double footY){
    iconButton(list,"trash","proxyRemove:",rect(bx,y+12,32,32),(Int)i,T("Remove","Удалить"));
    bx-=8+ew;button(list,editTitle,"proxyEdit:",rect(bx,y+12,ew,32),(Int)i,false);
    bx-=8+cw;Obj check=button(list,checkTitle,"proxyCheck:",rect(bx,y+12,cw,32),(Int)i,false,"checkmark.shield");
-   send<void>(check,"setToolTip:",str(T("Open a tunnel to api.openai.com:443 through every address (no data is sent)","Открыть туннель к api.openai.com:443 через каждый адрес (данные не отправляются)")));
+   send<void>(check,"setToolTip:",str(proxyIsVless(x2)?T("Verify a TLS handshake to api.openai.com:443 through VLESS; no account or model request.","Проверить TLS-соединение с api.openai.com:443 через VLESS; без запроса аккаунта или модели."):T("Open a tunnel to api.openai.com:443 through every address (no data is sent)","Открыть туннель к api.openai.com:443 через каждый адрес (данные не отправляются)")));
    if(send<bool>(proxyChecking,"containsObject:",get(x2,"id")))disable(check);}
   lines(rootView,T("Changes apply when a profile starts; running windows keep their connection until they are restarted.","Изменения применяются при запуске профиля; работающие окна сохраняют соединение до перезапуска."),rect(x,top+(listH<room?listH:room)+20,w,18),12,muted(),18);}
- footerNote(x,footY,w,"lock.shield",str(T("Passwords stay in a private file in AppDeck’s data folder; each bridge gets them through a pipe, never on the command line.","Пароли хранятся в закрытом файле в папке данных AppDeck; мост получает их через канал, а не в командной строке.")));
+ footerNote(x,footY,w,"lock.shield",str(T("Passwords and VLESS links stay in a private file; each bridge receives its configuration through a pipe, never on the command line.","Пароли и ссылки VLESS хранятся в закрытом файле; мост получает настройки через канал, а не в командной строке.")));
 }

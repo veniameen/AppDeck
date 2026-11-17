@@ -9,6 +9,7 @@
 #include "edge_policy.hpp"
 #include "usage_policy.hpp"
 #include "proxy_policy.hpp"
+#include "vless_policy.hpp"
 #include "claude_session_policy.hpp"
 using namespace mac;
 namespace {
@@ -1224,7 +1225,7 @@ void registerClasses(){
  {"languagePick:",languagePickAction},
  {"claudeProfileSettings:",claudeProfileSettingsAction},{"claudeWeb:",claudeWebAction},{"claudeProxyChanged:",claudeProxyChangedAction},{"claudeConnectionSummaryChanged:",claudeConnectionSummaryChangedAction},{"claudeAddProxy:",claudeAddProxyAction},{"claudeNetworkHelp:",claudeNetworkHelpAction},{"claudeBridgeToggle:",claudeBridgeToggleAction},{"claudeSessionsRefresh:",claudeSessionsRefreshAction},{"claudeSessionMenu:",claudeSessionMenuAction},{"claudeSessionOpen:",claudeSessionOpenAction},
  {"toggleEdge:",toggleEdgeAction},{"edgeFocus:",edgeFocusAction},
- {"proxyAdd:",proxyAddAction},{"proxyEdit:",proxyEditAction},{"proxyRemove:",proxyRemoveAction},{"proxyCheck:",proxyCheckAction},{"proxyCheckWorker:",proxyCheckWorker},{"proxyCheckFinished:",proxyCheckFinished},
+ {"proxyAdd:",proxyAddAction},{"proxyEdit:",proxyEditAction},{"proxyKindChanged:",proxyKindChangedAction},{"proxyRemove:",proxyRemoveAction},{"proxyCheck:",proxyCheckAction},{"proxyCheckWorker:",proxyCheckWorker},{"proxyCheckFinished:",proxyCheckFinished},
  {"proxyDefaultMenu:",proxyDefaultMenuAction},{"proxyDefaultPick:",proxyDefaultPickAction},{"profileProxy:",profileProxyAction},
  {"edgeMoveUp:",edgeMoveUpAction},{"edgeMoveDown:",edgeMoveDownAction},{"edgeMoveFirst:",edgeMoveFirstAction},{"edgeDropped:",edgeDroppedAction},{"edgeScrolled:",edgeScrolledAction},{"selfTestTick:",selfTestTick},{"selfTestClick:",selfTestClickAction},{"edgeAnimationTick:",edgeAnimationTick},
  {"hideProfiles:",hideProfilesAction},{"restoreWindows:",restoreWindowsAction},

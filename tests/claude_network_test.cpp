@@ -9,6 +9,7 @@ namespace {
 unsigned checks=0;Obj scratch=nullptr,children=nullptr,bridges=nullptr;
 constexpr const char* fixtureUser="network-fixture-login-4ab71";
 constexpr const char* fixturePass="network-fixture-secret-79d42";
+constexpr const char* fixtureVlessId="a1234567-89ab-4def-8123-456789abcdef";
 void requireNetwork(bool ok,const char* detail){
  ++checks;if(ok)return;
  for(UInt i=0;i<count(children);++i)if(!send<bool>(at(children,i),"isTerminated"))send<bool>(at(children,i),"terminate");
@@ -18,7 +19,7 @@ void requireNetwork(bool ok,const char* detail){
 void pumpNetwork(){send<void>(send(cls("NSRunLoop"),"currentRunLoop"),"runUntilDate:",send(cls("NSDate"),"dateWithTimeIntervalSinceNow:",.025));}
 bool hasArgument(Obj observation,Obj expected){Obj args=get(observation,"arguments");for(UInt i=0;i<count(args);++i)if(same(at(args,i),expected))return true;return false;}
 bool containsFixtureCredential(Obj value){
- if(isClass(value,"NSString"))return strstr(utf8(value),fixtureUser)||strstr(utf8(value),fixturePass);
+ if(isClass(value,"NSString"))return strstr(utf8(value),fixtureUser)||strstr(utf8(value),fixturePass)||strstr(utf8(value),fixtureVlessId);
  if(isClass(value,"NSDictionary"))return containsFixtureCredential(send(value,"allKeys"))||containsFixtureCredential(send(value,"allValues"));
  if(isClass(value,"NSArray"))for(UInt i=0;i<count(value);++i)if(containsFixtureCredential(at(value,i)))return true;
  return false;
@@ -47,7 +48,8 @@ Obj launchNetworkFixture(Obj p){
  requireNetwork(count(proxyTasks)==before+1,"each launched fixture receives one real proxy bridge");Obj task=at(proxyTasks,before);
  requireNetwork(send<bool>(task,"isRunning")&&send<int>(task,"processIdentifier")>0,"the real loopback bridge remains alive while its fixture runs");
  requireNetwork(!containsFixtureCredential(send(task,"arguments"))&&!containsFixtureCredential(send(task,"environment")),"bridge credentials are absent from helper argv and environment");
- double deadline=uptimeNow()+12;while(!exists(networkObservationPath(p))&&uptimeNow()<deadline)pumpNetwork();Obj observation=mutablePlist(networkObservationPath(p));
+ double deadline=uptimeNow()+12;Obj observation=nullptr;
+ while(uptimeNow()<deadline){observation=mutablePlist(networkObservationPath(p));if(isClass(observation,"NSDictionary")&&integer(get(observation,"pid"))==integer(get(p,"pid")))break;pumpNetwork();}
  requireNetwork(isClass(observation,"NSDictionary"),"fixture records its effective launch configuration");
  requireNetwork(integer(get(observation,"pid"))==integer(get(p,"pid")),"observation belongs to the exact managed child");return observation;
 }
@@ -134,6 +136,32 @@ int main(int argc,char** argv){
  for(Obj item:{p,web})requireNetwork(truth(get(item,"proxyRequired"))&&truth(get(item,"proxyHardened"))&&same(get(item,"proxy"),get(proxy,"id")),"reload preserves explicit required routing and DNS policy for each profile");
  stopNetworkFixture(p,at(bridges,0));requireNetwork(running(web)&&send<bool>(at(bridges,1),"isRunning"),"closing Claude leaves the linked browser and its own bridge running");stopNetworkFixture(web,at(bridges,1));
  claudeReapLaunches();proxyReap();requireNetwork(!count(claudeLaunchTasks)&&!count(proxyTasks),"normal termination reaps every owned child and bridge");
+ // Different profiles of the same executable keep independent VLESS bridges and route selections.
+ // Upstreams intentionally point at a closed loopback port: this fixture checks launch wiring only.
+ Obj vless=dict(),vlessLines=array();put(vless,"id",uuid());put(vless,"name",str("Offline VLESS fixture"));put(vless,"scheme",str("vless"));
+ add(vlessLines,cat(cat(str("vless://"),str(fixtureVlessId)),str("@127.0.0.1:9?security=tls&type=tcp&sni=fixture.invalid")));put(vless,"lines",vlessLines);add(proxies,vless);
+ requireNetwork(proxyValid(vless)&&proxySave(),"valid VLESS link uses the existing private proxy store");
+ requireNetwork(lstat(utf8(proxyPath()),&st)==0&&(st.st_mode&0777)==0600,"VLESS credentials remain in the private proxy file");
+ Obj vlessConfig=proxyConfig(vless,nullptr);requireNetwork(vlessConfig&&strstr(utf8(vlessConfig),fixtureVlessId),"VLESS credentials are sent only in the stdin configuration");
+ Obj p2=networkProfile(currentApp(),"Second VLESS profile");put(p,"proxy",get(vless,"id"));put(p2,"proxy",get(vless,"id"));
+ UInt bridgeStart=count(bridges);Obj vlessObserved=launchNetworkFixture(p),vlessObserved2=launchNetworkFixture(p2);checkNetworkLaunch(p,vlessObserved,false);checkNetworkLaunch(p2,vlessObserved2,false);
+ requireNetwork(integer(get(p,"pid"))!=integer(get(p2,"pid"))&&integer(get(p,"proxyPort"))!=integer(get(p2,"proxyPort")),"same app with two VLESS profiles has distinct PIDs and loopback ports");
+ requireNetwork(same(send(send(send(at(bridges,bridgeStart),"executableURL"),"path"),"lastPathComponent"),str("appdeck-vless")),"VLESS selection launches only the bundled VLESS helper");
+ requireNetwork(save()&&!containsFixtureCredential(mutablePlist(join(dataRoot,"state.plist"))),"VLESS URL and UUID never enter persisted profile state");
+ Obj probeEnv=dict();requireNetwork(usageProxy(p,probeEnv)&&get(probeEnv,"HTTPS_PROXY")&&!containsFixtureCredential(probeEnv),"limit probes use a credential-free VLESS loopback route");
+ requireNetwork(!same(get(probeEnv,"HTTPS_PROXY"),proxyLocalAddress(p))&&!same(get(probeEnv,"HTTPS_PROXY"),proxyLocalAddress(p2)),"limit probe has a separate VLESS bridge from both windows");
+ Obj direct=networkProfile(currentApp(),"Direct fixture");put(direct,"proxy",str("none"));put(direct,"proxyRequired",boolean(false));UInt beforeDirect=count(proxyTasks);
+ previewMode=true;bool directStarted=launch(direct,false);previewMode=false;Obj directChild=running(direct);if(directChild)add(children,directChild);
+ requireNetwork(directStarted&&directChild&&count(proxyTasks)==beforeDirect&&!proxyLocalAddress(direct),"unselected profile launches directly without a VLESS helper");
+ double directDeadline=uptimeNow()+12;while(!exists(networkObservationPath(direct))&&uptimeNow()<directDeadline)pumpNetwork();
+ Obj directObservation=mutablePlist(networkObservationPath(direct));requireNetwork(isClass(directObservation,"NSDictionary")&&!get(get(directObservation,"environment"),"HTTPS_PROXY"),"direct profile does not inherit another profile's bridge");
+ while(!send<bool>(directChild,"isFinishedLaunching")&&uptimeNow()<directDeadline)pumpNetwork();requireNetwork(send<bool>(directChild,"terminate"),"direct fixture quits normally");
+ directDeadline=uptimeNow()+10;while(!send<bool>(directChild,"isTerminated")&&uptimeNow()<directDeadline)pumpNetwork();requireNetwork(send<bool>(directChild,"isTerminated"),"direct fixture terminates");
+ stopNetworkFixture(p,at(bridges,bridgeStart));requireNetwork(running(p2)&&send<bool>(at(bridges,bridgeStart+1),"isRunning"),"stopping one VLESS profile leaves the other profile's bridge active");stopNetworkFixture(p2,at(bridges,bridgeStart+1));
+ proxyForget(vless);claudeReapLaunches();proxyReap();
+ Obj malformed=networkProfile(currentApp(),"Invalid VLESS fixture");put(malformed,"proxy",get(vless,"id"));Obj invalidVless=array();add(invalidVless,str("vless://invalid"));put(vless,"lines",invalidVless);
+ requireNetwork(!proxyValid(vless),"malformed VLESS configuration is rejected");checkBlockedLaunch(malformed,false);put(vless,"lines",vlessLines);
+ for(Obj item:{p2,direct,malformed})if(exists(claudeProfileTemp(item)))removeNetworkArtifact(claudeProfileTemp(item));
  Obj rejected=networkProfile(currentApp(),"Rejected routing fixture");put(rejected,"proxy",str("none"));checkBlockedLaunch(rejected,true);
  put(rejected,"proxy",str("90000000-0000-4000-8000-000000000001"));checkBlockedLaunch(rejected,true);
  put(rejected,"proxy",get(proxy,"id"));Obj badLines=array();add(badLines,str("invalid endpoint without a port"));put(proxy,"lines",badLines);checkBlockedLaunch(rejected,false);

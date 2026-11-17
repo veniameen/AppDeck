@@ -3,6 +3,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 mkdir -p build/tests
+bash scripts/build-vless.sh
 for test_arch in arm64 x86_64; do
   test_app="$PWD/build/tests/ClaudeNetworkTest-$test_arch.app"
   mkdir -p "$test_app/Contents/MacOS"
@@ -15,6 +16,7 @@ for test_arch in arm64 x86_64; do
   xcrun clang++ -std=c++17 -O2 -fno-exceptions -fno-rtti -fstack-protector-strong -nostdlib++ \
     -Wall -Wextra -Werror -mmacosx-version-min=13.0 -arch "$test_arch" \
     src/proxy_bridge.cpp -o "$test_app/Contents/MacOS/appdeck-proxy"
+  lipo build/appdeck-vless -thin "$test_arch" -output "$test_app/Contents/MacOS/appdeck-vless"
   cat > "$test_app/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -26,6 +28,7 @@ for test_arch in arm64 x86_64; do
 </dict></plist>
 PLIST
   /usr/bin/codesign --force --sign - --identifier local.appdeck.network-fixture-proxy "$test_app/Contents/MacOS/appdeck-proxy" >/dev/null 2>&1
+  /usr/bin/codesign --force --sign - --identifier local.appdeck.network-fixture-vless "$test_app/Contents/MacOS/appdeck-vless" >/dev/null 2>&1
   /usr/bin/codesign --force --sign - "$test_app" >/dev/null 2>&1
   arch -"$test_arch" "$test_app/Contents/MacOS/ClaudeNetworkTest" "$PWD/build/tests/claude-network-fixture-$test_arch"
 done

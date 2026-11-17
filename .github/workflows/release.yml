@@ -13,6 +13,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: tools/vless-helper/go.mod
+          cache-dependency-path: tools/vless-helper/go.sum
+
+      - name: VLESS helper against offline loopback fixtures
+        run: bash scripts/test-vless.sh
+
       - name: Test and build
         run: |
           make test

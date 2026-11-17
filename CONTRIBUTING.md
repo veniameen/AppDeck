@@ -4,7 +4,7 @@ Thanks for your interest in AppDeck! Bug reports, compatibility notes for new ap
 
 ## Setup
 
-You need macOS 13 or later and the Apple Command Line Tools (`xcode-select --install`). There is no Xcode project and no third-party dependency.
+You need macOS 13 or later, the Apple Command Line Tools (`xcode-select --install`), Python 3 and Go 1.25.5 or later. There is no Xcode project. The C++ manager uses system libraries only; the separate VLESS helper uses the pinned Go dependencies in `tools/vless-helper/go.mod` and `go.sum`. Keep its license notices and complete corresponding-source archive in distributed app bundles.
 
 ```sh
 make            # build/AppDeck.app — universal, ad-hoc signed

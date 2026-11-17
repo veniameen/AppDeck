@@ -2,6 +2,12 @@
 
 All notable changes to AppDeck. Verification details for the current release are in [docs/TESTING.md](docs/TESTING.md).
 
+## Unreleased
+
+### Added
+
+- Per-profile VLESS connections imported from one `vless://` link, supporting TCP with TLS or REALITY and optional Vision. A separate loopback helper uses the existing application proxy settings, receives credentials through stdin and exits with its profile process. No TUN or system routing changes are required; applications that ignore proxy settings remain outside this route. Available in source/CI builds, with verification and limitations in [docs/TESTING.md](docs/TESTING.md#unreleased-vless-support--2026-11-17).
+
 ## 0.15.3
 
 ### Changed

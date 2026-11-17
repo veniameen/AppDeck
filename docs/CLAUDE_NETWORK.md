@@ -17,7 +17,7 @@ The connection summary names the effective proxy, including an automatically sel
 
 If **Require proxy** is off, an absent default or a subsequently removed selection can resolve to a direct launch. If a selected proxy exists but its local bridge fails, launch is cancelled even with the checkbox off. The requirement checks configuration and bridge startup, not whether the upstream provider will accept CONNECT.
 
-Each app process receives its own credential-free `http://127.0.0.1:<port>` bridge address. The bridge sends upstream proxy credentials from memory; passwords remain in AppDeck's `proxies.plist` (0600), never profile settings or process arguments. It exits when its app exits. The selected upstream may be HTTP CONNECT or SOCKS5; Claude Code itself receives HTTP because it does not directly support SOCKS proxies.
+Each app process receives its own credential-free `http://127.0.0.1:<port>` bridge address. The bridge sends upstream credentials from memory; passwords and VLESS links remain in AppDeck's `proxies.plist` (0600), never profile settings, process arguments or environment variables. Configuration reaches the helper through stdin. It exits when its app exits. The selected upstream may be HTTP CONNECT, SOCKS5 or VLESS; Claude Code itself always receives the local HTTP endpoint.
 
 AppDeck sets upper- and lowercase `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, `NO_PROXY` and `NODE_USE_ENV_PROXY=1`. `NO_PROXY` contains only localhost/loopback addresses. An HTTP URL for `HTTPS_PROXY` is intentional: the HTTP proxy transports TLS using CONNECT; TLS remains end to end. Claude also receives `CLAUDE_CODE_HTTP_PROXY`, `CLAUDE_CODE_HTTPS_PROXY`, `grpc_proxy` and `CLAUDE_CODE_PROXY_RESOLVES_HOSTS=1`. The aliases supplement the documented standard variables; they do not force every library to use a proxy.
 
@@ -28,6 +28,14 @@ For new profiles with private Code storage, AppDeck also reconciles these allowl
 Chromium receives `--proxy-server`, the loopback bypass list, `--disable-quic` and `--force-webrtc-ip-handling-policy=disable_non_proxied_udp`. The linked Chrome profile can additionally use `--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE localhost, EXCLUDE 127.0.0.1, EXCLUDE [::1]`. Claude Desktop 4.4212.0 refuses startup with this switch; AppDeck leaves that vendor restriction intact. Code still receives its supported proxy-hostname-resolution setting. These control Chromium. Embedded Code, tools, MCP servers, SSH sessions, Cowork VMs and external browsers may use different networking. Managed organization policies remain authoritative.
 
 Sources: [Claude Code network configuration](https://code.claude.com/docs/en/network-config), [environment variables](https://code.claude.com/docs/en/env-vars), [Desktop network requirements](https://code.claude.com/docs/en/desktop#network-access-requirements), [Chromium proxy behavior](https://chromium.googlesource.com/chromium/src/+/HEAD/net/docs/proxy.md), [Chromium resolver rules](https://www.chromium.org/developers/design-documents/network-stack/socks-proxy/).
+
+## VLESS for one profile
+
+On the **Proxy** page choose **Add proxy → VLESS** and save one `vless://` link. Initial support is TCP with TLS or REALITY; subscriptions, WebSocket and gRPC are not supported. Choose that saved connection in the intended Claude profile's proxy selector. Leave the global default unset and other profiles on **No proxy** when they should keep their existing network route. Existing windows need a restart to receive a changed selection.
+
+The bundled `appdeck-vless` helper carries the selected profile's supported HTTP proxy requests through that VLESS server. It has no direct outbound fallback: an unavailable server fails the request. This does not make **Require proxy** a firewall, and native helpers that ignore proxy settings retain the limitations above. The feature does not enable TUN, modify system routes or DNS, or require administrator access; unrelated applications retain their current settings.
+
+TLS and REALITY change how the connection to a server is protected and presented. They do not make an unreachable server address reachable through an IP allowlist. Access on a restricted network depends on the server endpoint and that network's rules; the presence of a `vless://` link does not establish connectivity. See [the VLESS protocol](https://xtls.github.io/en/config/outbounds/vless.html) and [REALITY transport security](https://xtls.github.io/en/config/transports/reality.html).
 
 ## Router VPN failure protection
 
