@@ -141,7 +141,7 @@ Add `Claude.app` with **Add app**; the Claude Desktop adapter is preselected. Th
 
 Click **New profile**, enter a name and choose the mode:
 
-- A new **clean profile** starts with empty Desktop data and an empty private Code folder. It can launch while another Claude copy is running. AppDeck does not copy your existing Code settings, skills, memory, transcripts or authentication into it, and does not include the profile in the session bridge.
+- A new **clean profile** starts with empty Desktop data and an empty private Code folder. It starts empty only once: subsequent launches and AppDeck restarts keep that profile's accumulated settings, plugins and local history in the same storage. It can launch while another Claude copy is running. AppDeck does not copy your existing Code settings, skills, memory, transcripts or authentication into it, and does not include the profile in the session bridge.
 - **Profile with shared Code sessions** uses separate Desktop data and the usual Code environment. On supported Claude versions, the optional bridge registers a conversation you select in another participating profile.
 
 **Existing profiles are preserved.** A clean Desktop profile created before 0.14 still uses the usual global Code configuration and transcripts in `~/.claude`; it is not silently converted or cleared. To get private Code storage, create a new clean profile. **Duplicate** opens the same chooser and creates new storage rather than copying the source account.
@@ -154,6 +154,8 @@ Click **New profile**, enter a name and choose the mode:
 | Account limits | Separate Claude Code meter sign-in | Separate Claude Code meter sign-in | Separate Claude Code meter sign-in |
 
 AppDeck preserves the real macOS home so Claude can use the login Keychain. The private Code folder applies to the new profile through `CLAUDE_CONFIG_DIR`; it does not create a new macOS user, reset system permissions or change the system Keychain. No authentication data, cookies or conversations are copied. Compatibility still depends on the installed Claude and embedded Code versions.
+
+Private Code storage separates user-level data. Profiles that open the same project folder still read that project's `.claude` settings and share its files. Use separate working copies when you also need independent project-local state.
 
 ### Proxy and optional traffic
 

@@ -6,6 +6,8 @@ AppDeck 0.14 creates a clean Claude Desktop and Claude Code profile from the unc
 
 Choose a saved proxy, the AppDeck default, or a direct connection. When there is one saved proxy and no default, a new Claude profile selects that proxy. **Add…** opens the existing secure proxy editor. Existing profiles expose this dialog through **More → Claude profile settings…** while Claude and its linked browser are stopped.
 
+The connection summary names the effective proxy, including an automatically selected default, and updates when the selection or requirement changes. **No AppDeck proxy** uses the Mac's current network; a router or system VPN still applies. AppDeck does not verify that VPN or claim that the displayed route is an observed public IP. Opening the dialog does not migrate or write existing profile data.
+
 | Setting | Effect and limits |
 |---|---|
 | Require proxy | Refuses a new launch if the selected proxy is missing or the local bridge cannot start. No direct launch is substituted. It is not a firewall for sockets opened by native helpers. |
@@ -26,6 +28,18 @@ For new profiles with private Code storage, AppDeck also reconciles these allowl
 Chromium receives `--proxy-server`, the loopback bypass list, `--disable-quic` and `--force-webrtc-ip-handling-policy=disable_non_proxied_udp`. The linked Chrome profile can additionally use `--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE localhost, EXCLUDE 127.0.0.1, EXCLUDE [::1]`. Claude Desktop 4.4212.0 refuses startup with this switch; AppDeck leaves that vendor restriction intact. Code still receives its supported proxy-hostname-resolution setting. These control Chromium. Embedded Code, tools, MCP servers, SSH sessions, Cowork VMs and external browsers may use different networking. Managed organization policies remain authoritative.
 
 Sources: [Claude Code network configuration](https://code.claude.com/docs/en/network-config), [environment variables](https://code.claude.com/docs/en/env-vars), [Desktop network requirements](https://code.claude.com/docs/en/desktop#network-access-requirements), [Chromium proxy behavior](https://chromium.googlesource.com/chromium/src/+/HEAD/net/docs/proxy.md), [Chromium resolver rules](https://www.chromium.org/developers/design-documents/network-stack/socks-proxy/).
+
+## Router VPN failure protection
+
+For a Mac connected behind a Keenetic VPN client, use a dedicated connection policy that contains **only the VPN connection**, assigned to that registered device or an isolated network segment. Raising the VPN's priority while retaining ordinary WAN in the policy allows fallback and is not a kill switch. The WAN itself must remain available to carry the encrypted tunnel.
+
+Check DNS interface bindings, IPv6 routing and any routing exceptions as part of that policy. A stable device registration or a dedicated protected SSID avoids a rotating private MAC address accidentally leaving a per-device policy. A router controls only connections that traverse it, not another Mac interface or a mobile hotspot. If the Mac instead connects remotely to a home VPN server, protection is needed on the Mac or its local travel router.
+
+Polling a public-IP service can warn that a route changed, but cannot prevent requests sent between checks. A failed check also does not prove that the VPN has failed. AppDeck does not install an OS firewall or stop an application based on such polling.
+
+Validate tunnel loss, remote-server failure, reconnect, DNS, IPv4 and IPv6 on a separate test client/segment first. Changing a live policy or disabling a working tunnel can interrupt current app requests; keeping the windows open does not prevent that interruption.
+
+Sources: [Keenetic connection policies](https://support.keenetic.com/titan/kn-1811/en/17892-connection-policies.html), [WireGuard Internet access](https://support.keenetic.com/hopper/kn-3811/en/21424-internet-access-through-a-wireguard-vpn-tunnel.html), [DNS interface binding](https://support.keenetic.com/starter/kn-1121/en/25049-dot-and-doh-proxy-servers-for-dns-requests-encryption.html).
 
 ## One VPS through Tailscale
 

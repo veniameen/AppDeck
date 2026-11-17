@@ -547,11 +547,24 @@ Obj popup(Obj parent,Rect f,const char* const* choices,UInt n,Int selectedIndex)
  for(UInt i=0;i<n;++i)send<void>(p,"addItemWithTitle:",str(choices[i]));send<void>(p,"selectItemAtIndex:",selectedIndex);send<void>(parent,"addSubview:",p);drop(p);return p;
 }
 Obj claudeFormFields=nullptr;
+Obj claudeConnectionSummary(Obj choice,bool required){
+ Obj selection=dict();put(selection,"proxy",choice);Obj selectedProxy=proxyFor(selection);
+ if(proxyUnresolved(selection)||(!selectedProxy&&required))return str(T("The selected proxy is unavailable. Choose a saved proxy before creating or saving this profile.","Выбранный прокси недоступен. Перед созданием или сохранением профиля выберите доступный прокси."));
+ if(!selectedProxy)return str(T("Uses the Mac's current network, including a router or system VPN. AppDeck adds no proxy and does not check the VPN connection.","Используется текущая сеть Mac, включая VPN на роутере или в системе. AppDeck не добавляет прокси и не проверяет состояние VPN."));
+ Obj text=cat(str(same(choice,str("default"))?T("Uses the AppDeck default: ","Используется прокси AppDeck по умолчанию: "):T("Uses proxy: ","Используется прокси: ")),get(selectedProxy,"name"));
+ return cat(text,str(required?T(". If the proxy cannot start, launch and limit checks are blocked. This is not a VPN kill switch.",". Если прокси не запустится, запуск и проверка лимитов блокируются. Это не VPN kill switch."):T(". Router and system VPN settings still apply. This is not a VPN kill switch.",". Настройки VPN роутера и системы продолжают действовать. Это не VPN kill switch.")));
+}
+void claudeConnectionSummaryUpdate(Obj fields){
+ Obj selector=get(fields,"proxy"),summary=get(fields,"connectionSummary");if(!selector||!summary)return;
+ Obj choice=send(send(selector,"selectedItem"),"representedObject");Obj text=claudeConnectionSummary(choice,send<Int>(get(fields,"required"),"state")==1);
+ send<void>(summary,"setStringValue:",text);send<void>(summary,"setToolTip:",text);
+}
+void claudeConnectionSummaryChangedAction(Obj,Sel,Obj){if(claudeFormFields)claudeConnectionSummaryUpdate(claudeFormFields);}
 void claudeProxyChoices(Obj selector,Obj choice=nullptr){
  send<void>(selector,"removeAllItems");
  auto option=[&](Obj title,Obj value){send<void>(selector,"addItemWithTitle:",title);send<void>(send(selector,"lastItem"),"setRepresentedObject:",value);};
- option(str(T("Direct connection","Прямое подключение")),str("none"));
- option(str(T("AppDeck default proxy","Прокси AppDeck по умолчанию")),str("default"));
+ option(str(T("No AppDeck proxy","Без прокси AppDeck")),str("none"));
+ option(cat(str(T("Default: ","По умолчанию: ")),proxyDefault()?get(proxyDefault(),"name"):str(T("no proxy","без прокси"))),str("default"));
  for(UInt i=0;i<count(proxies);++i)option(get(at(proxies,i),"name"),get(at(proxies,i),"id"));
  if(!choice)choice=proxyDefault()?str("default"):count(proxies)==1?get(at(proxies,0),"id"):str("none");
  bool found=false;Obj items=send(selector,"itemArray");for(UInt i=0;i<count(items);++i)if(same(send(at(items,i),"representedObject"),choice)){send<void>(selector,"selectItemAtIndex:",(Int)i);found=true;break;}
@@ -560,36 +573,39 @@ void claudeProxyChoices(Obj selector,Obj choice=nullptr){
 void claudeProxyChangedAction(Obj,Sel,Obj sender){
  if(!claudeFormFields)return;Obj choice=send(send(sender,"selectedItem"),"representedObject");bool on=!same(choice,str("none"));
  send<void>(get(claudeFormFields,"required"),"setState:",(Int)(on?1:0));send<void>(get(claudeFormFields,"dns"),"setState:",(Int)(on?1:0));
+ claudeConnectionSummaryUpdate(claudeFormFields);
 }
 void claudeAddProxyAction(Obj,Sel,Obj){
  if(!claudeFormFields||!proxyEdit(nullptr))return;Obj selector=get(claudeFormFields,"proxy");claudeProxyChoices(selector,count(proxies)?get(at(proxies,count(proxies)-1),"id"):str("none"));claudeProxyChangedAction(nullptr,nullptr,selector);
 }
 void claudeNetworkHelpAction(Obj,Sel,Obj);
 Obj claudeProfileForm(Obj initial,Obj* nameField,Obj* modeField,Obj fields=nullptr,Obj existing=nullptr){
- Obj view=send(send((Obj)deckViewClass,"alloc"),"initWithFrame:",rect(0,0,520,414));if(!fields)fields=dict();
+ Obj view=send(send((Obj)deckViewClass,"alloc"),"initWithFrame:",rect(0,0,520,476));if(!fields)fields=dict();
  label(view,T("Profile name","Имя профиля"),rect(0,4,120,22),13,ink());
  Obj field=send(send(cls("NSTextField"),"alloc"),"initWithFrame:",rect(130,0,390,26));send<void>(field,"setStringValue:",initial);send<void>(view,"addSubview:",field);drop(field);
  label(view,T("Environment","Среда"),rect(0,44,120,22),13,ink());
  const char* modes[]={T("Clean Claude Desktop + Code","Чистый Claude Desktop + Code"),T("Shared Code settings and sessions","Общие настройки и сессии Code"),T("Desktop-only isolation (older profile)","Изоляция Desktop (старый профиль)")};
  Int selectedMode=existing?(claudeCodeIsolated(existing)?0:claudeCleanProfile(existing)?2:1):0;
  Obj mode=popup(view,rect(130,38,390,28),modes,existing?3:2,selectedMode);if(existing)send<void>(mode,"setEnabled:",false);
- label(view,T("Clean mode has separate sign-in, Code settings, plugins and local history. Existing profiles are preserved. macOS and project rules still apply.","Чистый режим: отдельный вход, настройки, плагины и локальная история Code. Старые профили сохраняются. Правила macOS и проектов действуют."),rect(0,78,520,52),12,muted());
- label(view,T("Proxy","Прокси"),rect(0,145,120,22),13,ink());
+ label(view,T("New clean profiles start empty. Desktop data, Code settings, plugins and local history then stay in this profile across restarts. Existing profiles keep their mode.","Новый чистый профиль создаётся пустым. Данные Desktop, настройки, плагины и история Code сохраняются между запусками. Режим старых профилей не меняется."),rect(0,78,520,52),12,muted());
+ label(view,T("Connection","Подключение"),rect(0,145,120,22),13,ink());
  Obj proxy=send(send(cls("NSPopUpButton"),"alloc"),"initWithFrame:pullsDown:",rect(130,138,264,28),false);send<void>(view,"addSubview:",proxy);drop(proxy);
  claudeProxyChoices(proxy,existing?(get(existing,"proxy")?get(existing,"proxy"):str("default")):nullptr);send<void>(proxy,"setTarget:",controller);send<void>(proxy,"setAction:",sel("claudeProxyChanged:"));
  button(view,T("Add…","Добавить…"),"claudeAddProxy:",rect(402,138,118,28));
  Obj choice=send(send(proxy,"selectedItem"),"representedObject");bool selectedProxy=!same(choice,str("none"));
- Obj required=checkbox(view,T("Require proxy · never substitute a direct launch","Обязательный прокси · не запускать напрямую"),rect(0,180,520,22),existing?truth(get(existing,"proxyRequired")):selectedProxy);
- Obj dns=checkbox(view,T("Block DNS bypass in linked Chrome (with proxy)","Блокировать обход DNS в связанном Chrome (с прокси)"),rect(0,208,520,22),existing?truth(get(existing,"proxyHardened")):selectedProxy);
- Obj traffic=checkbox(view,T("Disable optional Code traffic and error reports","Отключить необязательный трафик Code и отчёты об ошибках"),rect(0,236,520,22),existing?truth(get(existing,"claudeReduceTraffic")):true);
+ Obj summary=label(view,"",rect(0,178,520,62),12,muted());put(fields,"connectionSummary",summary);
+ Obj required=checkbox(view,T("Require proxy · never substitute a direct launch","Обязательный прокси · не запускать напрямую"),rect(0,244,520,22),existing?truth(get(existing,"proxyRequired")):selectedProxy);
+ send<void>(required,"setAction:",sel("claudeConnectionSummaryChanged:"));
+ Obj dns=checkbox(view,T("Block DNS bypass in linked Chrome (with proxy)","Блокировать обход DNS в связанном Chrome (с прокси)"),rect(0,272,520,22),existing?truth(get(existing,"proxyHardened")):selectedProxy);
+ Obj traffic=checkbox(view,T("Disable optional Code traffic and error reports","Отключить необязательный трафик Code и отчёты об ошибках"),rect(0,300,520,22),existing?truth(get(existing,"claudeReduceTraffic")):true);
  send<void>(traffic,"setToolTip:",str(T("Also disables Code auto-updates, feature experiments and Remote Control. Account-limit checks keep their separate safe configuration.","Также отключает автообновления Code, эксперименты и Remote Control. Проверки лимитов используют отдельные безопасные настройки.")));
  Obj linkedWeb=claudeWebProfile(existing);
- Obj web=checkbox(view,T("Also create a separate Chrome profile for claude.ai","Также создать отдельный профиль Chrome для claude.ai"),rect(0,264,520,22),linkedWeb!=nullptr);
+ Obj web=checkbox(view,T("Also create a separate Chrome profile for claude.ai","Также создать отдельный профиль Chrome для claude.ai"),rect(0,328,520,22),linkedWeb!=nullptr);
  if(linkedWeb)send<void>(web,"setEnabled:",false);
- label(view,T("Proxy settings are not a system firewall. To block every direct TCP/UDP connection, configure OS or network egress rules. hosts alone is insufficient.","Настройки прокси — не системный firewall. Для запрета всех прямых TCP/UDP-соединений нужны правила ОС или сети. Одного hosts недостаточно."),rect(0,302,520,52),12,faint());
- button(view,T("Network setup guide","Настройка сети"),"claudeNetworkHelp:",rect(0,376,220,28));
+ label(view,T("Proxy settings are not a system firewall. To block every direct TCP/UDP connection, configure OS or network egress rules. hosts alone is insufficient.","Настройки прокси — не системный firewall. Для запрета всех прямых TCP/UDP-соединений нужны правила ОС или сети. Одного hosts недостаточно."),rect(0,364,520,52),12,faint());
+ button(view,T("Network setup guide","Настройка сети"),"claudeNetworkHelp:",rect(0,438,220,28));
  for(auto entry:{"required","dns","traffic","web","proxy"}){Obj value=!strcmp(entry,"required")?required:!strcmp(entry,"dns")?dns:!strcmp(entry,"traffic")?traffic:!strcmp(entry,"web")?web:proxy;put(fields,entry,value);}
- *nameField=field;*modeField=mode;return view;
+ claudeConnectionSummaryUpdate(fields);*nameField=field;*modeField=mode;return view;
 }
 Obj claudeWebProfile(Obj p){Obj id=get(p,"claudeWebProfile");for(UInt i=0;i<count(profiles);++i){Obj w=at(profiles,i);if(id&&same(get(w,"id"),id)&&truth(get(w,"claudeWeb"))&&!isMaster(w)&&deck::adapter(utf8(get(appFor(w),"adapter")))==deck::Adapter::Chromium)return w;}return nullptr;}
 Obj claudeChromePath(){
@@ -985,7 +1001,7 @@ void buildUI(){
    caption(rootView,T("LOCAL CODE SESSIONS","ЛОКАЛЬНЫЕ СЕССИИ CODE"),rect(x,368,w,14));
    Obj bridge=card(rootView,rect(x,390,w,settingRowH),16);bool bridgeOn=truth(get(a,"claudeSessionBridge"));
    settingRow(bridge,0,w,"bubble.left.and.bubble.right",T("Session bridge","Общие сессии"),str(bridgeOn?T("On · choose an account from Code sessions","Включено · выбирайте аккаунт в сессиях Code"):T("Off · each Desktop list stays independent","Выключено · списки Desktop раздельные")),bridgeOn?T("Turn off","Отключить"):T("Turn on…","Включить…"),"claudeBridgeToggle:",-1,bw);
-   lines(rootView,T("New clean profiles have private Code settings and history and never join the session bridge. Existing profiles keep their original mode.","Новые чистые профили имеют отдельные настройки и историю Code и не участвуют в обмене сессиями. Старые профили сохраняют свой режим."),rect(x,462,w,48),12,muted(),18);
+   lines(rootView,T("New clean profiles start empty once, then keep their own Code settings and history across restarts. They never join the session bridge. Existing profiles keep their mode.","Новые чистые профили пусты только при создании, затем сохраняют свои настройки и историю Code между запусками. Обмена сессиями нет. Старые профили сохраняют свой режим."),rect(x,462,w,48),12,muted(),18);
    footerNote(x,footY,w,"lock.shield",str(T("Each account’s sign-in and data stay separate.","Вход и данные каждого аккаунта остаются раздельными.")));}
   else if(!codexSettings){pageHeader(x,w,eyebrow,title,nullptr);
    Obj box=card(rootView,rect(x,138,w,72),16);iconTile(box,rect(16,20,32,32),"hand.point.left");
@@ -1206,7 +1222,7 @@ void registerClasses(){
  {"openSharedFolder:",openSharedFolder},{"openSharedFile:",openSharedFile},{"importSettings:",importSettings},{"openData:",openDataAction},{"addProject:",addProjectAction},
  {"projectAction:",projectAction},{"showHelp:",helpAction},{"diagnostics:",diagnosticsAction},{"tileWindows:",tileAction},{"timerTick:",tick},
  {"languagePick:",languagePickAction},
- {"claudeProfileSettings:",claudeProfileSettingsAction},{"claudeWeb:",claudeWebAction},{"claudeProxyChanged:",claudeProxyChangedAction},{"claudeAddProxy:",claudeAddProxyAction},{"claudeNetworkHelp:",claudeNetworkHelpAction},{"claudeBridgeToggle:",claudeBridgeToggleAction},{"claudeSessionsRefresh:",claudeSessionsRefreshAction},{"claudeSessionMenu:",claudeSessionMenuAction},{"claudeSessionOpen:",claudeSessionOpenAction},
+ {"claudeProfileSettings:",claudeProfileSettingsAction},{"claudeWeb:",claudeWebAction},{"claudeProxyChanged:",claudeProxyChangedAction},{"claudeConnectionSummaryChanged:",claudeConnectionSummaryChangedAction},{"claudeAddProxy:",claudeAddProxyAction},{"claudeNetworkHelp:",claudeNetworkHelpAction},{"claudeBridgeToggle:",claudeBridgeToggleAction},{"claudeSessionsRefresh:",claudeSessionsRefreshAction},{"claudeSessionMenu:",claudeSessionMenuAction},{"claudeSessionOpen:",claudeSessionOpenAction},
  {"toggleEdge:",toggleEdgeAction},{"edgeFocus:",edgeFocusAction},
  {"proxyAdd:",proxyAddAction},{"proxyEdit:",proxyEditAction},{"proxyRemove:",proxyRemoveAction},{"proxyCheck:",proxyCheckAction},{"proxyCheckWorker:",proxyCheckWorker},{"proxyCheckFinished:",proxyCheckFinished},
  {"proxyDefaultMenu:",proxyDefaultMenuAction},{"proxyDefaultPick:",proxyDefaultPickAction},{"profileProxy:",profileProxyAction},
