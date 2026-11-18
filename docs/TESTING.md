@@ -36,6 +36,12 @@ No check signs in to an account, sends a model turn or opens a real profile's da
 
 Why the self-test replays events inside the app: on macOS 26 mouse events posted to another process (`CGEventPostToPid`) are dropped, and posting to the system event stream would move the user's pointer. The self-test therefore covers everything from `-[NSApplication sendEvent:]` on; a real pointer or trackpad gesture is part of the manual checklist.
 
+## Codex bundled marketplace registration — 2026-11-18
+
+The bundled CLI in Codex Desktop 26.1111.21308 reproduced the different-source error with two temporary Codex homes and networking disabled. The CLI generated the first home's local marketplace entry. Registering the second home's bundled directory with a copy of that config failed. After processing the same config through AppDeck's profile editor, registration succeeded with `alreadyAdded: true` and the second home's directory. The source config remained byte-identical.
+
+`make verify` includes 46 native profile preparation assertions per architecture on macOS 26.2 (arm64 and x86_64 via Rosetta). They cover existing and new profiles, detached and imported settings, repeated preparation, private backups and preservation of other marketplaces, plugin choices and organization restrictions. The signed-in Desktop window and the reported white screen remain unverified.
+
 ## Unreleased VLESS support — 2026-11-17
 
 VLESS is an additional per-profile proxy connection, using a separate loopback HTTP bridge. It does not install TUN, change system routes/DNS, or provide OS-level isolation. The existing release version remains 0.15.3; VLESS support has not been tagged or released, and this build has not been installed over the user's application.

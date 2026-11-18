@@ -75,7 +75,7 @@ For linked copies:
 
 | Data | Behaviour |
 |---|---|
-| `config.toml` | Read from the base and copied before a stopped copy launches. The sign-in store is forced to `file`, so it stays inside the copy's own `CODEX_HOME`. |
+| `config.toml` | Read from the base before a stopped copy launches. AppDeck sets the sign-in store to `file` and points the built-in `openai-bundled` marketplace at the copy's own Codex folder. |
 | `AGENTS.md` | Copied before launch. Project `AGENTS.md` files stay in their repositories. |
 | `skills/`, `rules/` | Linked to the base folders when they exist; changes are visible to every profile. |
 | `~/.agents/skills` | Stays the same folder of your macOS user; AppDeck does not move it. |
@@ -86,6 +86,8 @@ For linked copies:
 This is not a full mirror of the Codex interface: appearance and internal UI settings are not synchronized.
 
 Configuration can hold MCP tokens, provider settings and organization restrictions; they are inherited through the explicitly connected `config.toml`. `forced_chatgpt_workspace_id` restrictions are never removed. AppDeck's TOML editing is deliberately conservative: an ambiguous sign-in key or a multi-line string stops the automatic preparation instead of rewriting arbitrary TOML.
+
+If Codex reports that `openai-bundled` is already registered from a different source, fully quit the affected copy and launch its existing profile from the updated AppDeck. During launch AppDeck repairs the local marketplace path that Desktop wrote in `[marketplaces.openai-bundled]`. This also works for detached profiles that inherited the path earlier. The previous local configuration is saved as `config.toml.previous`.
 
 ## Shared history and projects
 

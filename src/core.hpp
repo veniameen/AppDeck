@@ -22,34 +22,6 @@ inline Adapter detect(const char* bundle,const char* name,bool electron){
  if(prefix(bundle,"com.google.Chrome")||prefix(bundle,"com.brave.Browser")||prefix(bundle,"com.microsoft.edgemac")||equal(bundle,"org.chromium.Chromium"))return Adapter::Chromium;
  return electron?Adapter::Electron:Adapter::Generic;
 }
-// Set only a top-level authentication store. Preserve all workspace restrictions.
-// Reject ambiguous constructs instead of silently rewriting arbitrary TOML.
-// This intentionally is NOT a general TOML parser. Output must fit cap.
-enum class ConfigResult{Ok,TooLarge,Ambiguous};
-inline ConfigResult codexConfig(const char* in,char* out,Size cap){
- const char* header="# Managed by AppDeck: separate file-based login per profile.\ncli_auth_credentials_store = \"file\"\n";
- Size used=0;auto emit=[&](const char* p,Size n){if(used+n>=cap)return false;for(Size k=0;k<n;++k)out[used++]=p[k];return true;};
- if(!emit(header,length(header)))return ConfigResult::TooLarge;
- bool root=true;const char* p=in?in:"";
- // Multiline strings can contain text that looks like keys/tables. Fail closed.
- for(const char* q=p;*q;++q)if((q[0]=='\"'&&q[1]=='\"'&&q[2]=='\"')||(q[0]=='\''&&q[1]=='\''&&q[2]=='\''))return ConfigResult::Ambiguous;
- while(*p){const char* end=p;while(*end&&*end!='\n')++end;const char* t=p;while(t<end&&(*t==' '||*t=='\t'||*t=='\r'))++t;
-  if(t<end&&*t=='[')root=false;
-  bool skip=prefix(t,"# Managed by AppDeck: separate file-based login per profile.");
-  if(root&&t<end&&*t!='#'){
-   const char* key="cli_auth_credentials_store";Size k=length(key);
-   if(prefix(t,key)){const char* z=t+k;while(z<end&&(*z==' '||*z=='\t'))++z;if(z<end&&*z=='=')skip=true;}
-   // A quoted or dotted form is legal TOML, but outside this small editor's remit.
-   if((*t=='\"'||*t=='\'')&&prefix(t+1,key))return ConfigResult::Ambiguous;
-   if(prefix(t,key)&&!skip)return ConfigResult::Ambiguous;
-  }
-  Size n=(Size)(end-p)+(*end=='\n'?1:0);
-  if(!skip&&!emit(p,n))return ConfigResult::TooLarge;
-  p=end+(*end=='\n'?1:0);
- }
- if(used&&out[used-1]!='\n'&&!emit("\n",1))return ConfigResult::TooLarge;
- out[used]=0;return ConfigResult::Ok;
-}
 inline bool authEnv(const char* k){return equal(k,"OPENAI_API_KEY")||equal(k,"CODEX_API_KEY")||equal(k,"CODEX_ACCESS_TOKEN")||equal(k,"OPENAI_ACCESS_TOKEN")||equal(k,"CODEX_CHATGPT_ACCESS_TOKEN");}
 inline bool neverShare(const char* n){return equal(n,"auth.json")||equal(n,".credentials.json")||equal(n,"sessions")||equal(n,"state_5.sqlite")||equal(n,"history.jsonl")||equal(n,"user-data");}
 }

@@ -1,4 +1,4 @@
-#include "../src/core.hpp"
+#include "../src/codex_config.hpp"
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
@@ -43,6 +43,63 @@ int main(){
  check(deck::codexConfig("cli_auth_credentials_store.other=1",out,sizeof out)==R::Ambiguous);
  check(deck::codexConfig("# Инструкции\nmodel = \"my-model\"\n",out,sizeof out)==R::Ok);
  std::string once(out);char twice[8192];check(deck::codexConfig(once.c_str(),twice,sizeof twice)==R::Ok);check(once==twice);
+
+ const char* copyHome="/AppDeck/Profiles/copy/codex";
+ const std::string bundledSuffix="/.tmp/bundled-marketplaces/openai-bundled";
+ const std::string baseSource="/primary/.codex"+bundledSuffix, copySource=copyHome+bundledSuffix;
+ const std::string table="[marketplaces.openai-bundled]\n";
+ const std::string local="source_type = \"local\"\n";
+ auto sourceLine=[](const std::string& path){return "source = \""+path+"\"\n";};
+ const std::string vendorConfig=table+local+sourceLine(baseSource);
+ const std::string copyConfig=table+local+sourceLine(copySource);
+ check(deck::codexConfig("",out,sizeof out)==R::Ok);
+ const std::string managedHeader(out);
+ auto checkProjection=[&](const std::string& input,const std::string& expected,const char* home){
+  check(deck::codexConfig(input.c_str(),out,sizeof out,home)==R::Ok);
+  check(out==managedHeader+expected);
+ };
+ checkProjection(vendorConfig,copyConfig,copyHome);
+ checkProjection(vendorConfig,vendorConfig,nullptr); // Source validation has no destination.
+ checkProjection(managedHeader+copyConfig,copyConfig,copyHome);
+
+ // Preserve comments, organization restrictions, plugin choices and nearby marketplace entries byte for byte.
+ const std::string preamble="forced_chatgpt_workspace_id = 'keep'\n# [marketplaces.openai-bundled]\n"
+  "[marketplaces.openai-bundled-custom]\n"+local+sourceLine(baseSource);
+ const std::string trailer="[plugins.\"tool@openai-bundled\"]\nenabled = false\n"
+  "[marketplaces.openai-bundled.metadata]\n"+local+sourceLine(baseSource);
+ const std::string section="  [ 'marketplaces' . \"openai-bundled\" ] # Desktop\r\n"
+  "items = [\n  ['#', ']'], # ]\n  ['source_type', 'git'],\n]\n"
+  "\t'source' = ";
+ const std::string typeLast=" # keep this comment\r\n\"source_type\" = 'local'\r\n";
+ checkProjection(preamble+section+"'"+baseSource+"'"+typeLast+trailer,
+                 preamble+section+"\""+copySource+"\""+typeLast+trailer,copyHome);
+
+ // Only the exact generated local registration belongs to this projection.
+ for(const auto& other:{
+  table+"source_type = \"git\"\n"+sourceLine(baseSource),
+  table+"# source_type = 'local'\n"+sourceLine(baseSource),
+  table+"source_type_old = 'local'\n"+sourceLine(baseSource),
+  table+local+"# "+sourceLine(baseSource),
+  table+local+"source_backup = '"+baseSource+"'\n",
+  table+local+sourceLine("/custom/plugins/openai-bundled"),
+  table+local+sourceLine("relative"+bundledSuffix),
+  table+local+sourceLine(baseSource+"-extra"),
+  std::string("[other.openai-bundled]\n")+local+sourceLine(baseSource),
+  std::string("[marketplaces.openai-bundled-extra]\n")+local+sourceLine(baseSource),
+  std::string("[marketplaces.openai-bundled.settings]\n")+local+sourceLine(baseSource)
+ })checkProjection(other,other,copyHome);
+
+ const char* escapedHome="/two path/quo\"te/back\\slash/line\nend\t";
+ const std::string encodedHome=R"(/two path/quo\"te/back\\slash/line\u000aend\u0009)";
+ checkProjection(vendorConfig,table+local+sourceLine(encodedHome+bundledSuffix),escapedHome);
+ std::string encodedConfig(out);
+ checkProjection(encodedConfig,table+local+sourceLine(encodedHome+bundledSuffix),escapedHome);
+ // Crossing the output boundary during expansion cannot touch the byte past the caller's buffer.
+ std::string canary(encodedConfig.size()+2,'!');
+ check(deck::codexConfig(vendorConfig.c_str(),canary.data(),encodedConfig.size(),escapedHome)==R::TooLarge);
+ check(canary[encodedConfig.size()]=='!');
+ check(deck::codexConfig(vendorConfig.c_str(),canary.data(),encodedConfig.size()+1,escapedHome)==R::Ok);
+ check(encodedConfig==canary.c_str()&&canary.back()=='!');
  // Truncation, newline and arbitrary UTF-8 input never overflow the output.
  for(int size=0;size<200;++size){std::string input(size,'a');char b[256];memset(b,0x55,sizeof b);auto r=deck::codexConfig(input.c_str(),b,128);check((unsigned char)b[128]==0x55);if(r==R::Ok)check(strlen(b)<128);}
  std::cout<<n<<" policy assertions passed\n";

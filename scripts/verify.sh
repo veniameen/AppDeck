@@ -51,6 +51,12 @@ for ARCH in arm64 x86_64; do
   arch -"$ARCH" "$GENERIC_TEST_APP/Contents/MacOS/GenericAppTest" "$OUT/generic-app-fixture"
 done
 
+# Codex profile preparation with synthetic linked and detached configurations, no vendor binary.
+"${STRICT[@]}" -O1 -arch arm64 -arch x86_64 tests/codex_profile_config_test.cpp -framework AppKit -lobjc -o "$OUT/codex-profile-config-test"
+for ARCH in arm64 x86_64; do
+  arch -"$ARCH" "$OUT/codex-profile-config-test"
+done
+
 # Production project adapter and group synchronizer against isolated profiles. These tests never
 # sign in, send a model turn or open a real profile database.
 for t in project_server_sync_test group_sync_test; do

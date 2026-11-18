@@ -55,7 +55,7 @@ An unused card may be converted to master; otherwise a new card is added. No ini
 
 For stopped linked copies, settingsSource is the external base (or the original AppDeck shared directory when no base is connected):
 
-- config.toml copied through the conservative auth-store editor; previous local content backed up. Organization restrictions are not removed.
+- The config editor sets the copy's file-based sign-in store. In Desktop's `[marketplaces.openai-bundled]` table it maps a local source ending in `/.tmp/bundled-marketplaces/openai-bundled` to the same location under the copy's physical `CODEX_HOME`. Desktop materializes and registers this catalogue at launch. The editor preserves other marketplace sources, plugin preferences and organization restrictions, and backs up the previous local configuration.
 - AGENTS.md copied; previous local content backed up.
 - skills/rules symlinked to the known selected base. Only AppDeck’s own former shared links can be repointed automatically; ordinary folders and unknown links cause a refusal.
 - source MCP/provider configuration, including embedded keys, is explicitly shared with consent. This is not credential redaction of arbitrary TOML.

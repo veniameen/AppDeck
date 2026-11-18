@@ -3,9 +3,10 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <sys/stat.h>
 #include <unistd.h>
-#include "core.hpp"
+#include "codex_config.hpp"
 #include "edge_policy.hpp"
 #include "usage_policy.hpp"
 #include "proxy_policy.hpp"
@@ -232,6 +233,16 @@ bool ensureShared(Obj a){
 #include "group_sync.hpp"
 #include "claude_profile.hpp"
 #include "claude_sessions.hpp"
+Obj projectedCodexConfig(Obj config,const char* profileHome){
+ const char* input=utf8(config);Size size=strlen(input);
+ if(size!=send<UInt>(config,"lengthOfBytesUsingEncoding:",(UInt)4))return nullptr;
+ // A control byte in the home path can expand to a six-byte TOML escape.
+ Size capacity=size+6*deck::length(profileHome)+512;
+ char* text=(char*)calloc(capacity,1);if(!text)return nullptr;
+ auto result=deck::codexConfig(input,text,capacity,profileHome);
+ Obj projected=result==deck::ConfigResult::Ok&&strlen(text)<=2*1024*1024?str(text):nullptr;
+ free(text);return projected;
+}
 Obj prepare(Obj p){
  Obj a=appFor(p),base=profileRoot(p);if(!a||!base)return str(T("App not found or invalid profile ID.","Не найдено приложение или некорректный ID профиля."));
  if(isStandalone(a))return str(T("This app uses its existing data. Separate profiles are unavailable.","Это приложение использует существующие данные. Отдельные профили недоступны."));
@@ -239,18 +250,23 @@ Obj prepare(Obj p){
  if(deck::adapter(utf8(get(a,"adapter")))==deck::Adapter::Claude)return prepareClaudeProfile(p);
  if(deck::adapter(utf8(get(a,"adapter")))!=deck::Adapter::Codex)return nullptr;
  Obj ch=join(base,"codex");if(!mkdirPrivate(ch)||!ensureShared(a))return str(T("Could not prepare the Codex folders.","Не удалось подготовить папки Codex."));
- bool shared=truth(get(p,"share"));Obj cfg=nullptr;
+ bool shared=truth(get(p,"share"));Obj dest=join(ch,"config.toml"),old=readText(dest);
+ if(!old&&(exists(dest)||symlink(dest)))return str(T("The local config.toml is unavailable or too large.","Локальный config.toml недоступен или слишком велик."));
+ Obj cfg=old?old:str("");
  if(shared&&baseSource(a)&&!directory(baseSource(a)))return str(T("The source workspace is unavailable. Launch cancelled without resetting settings.","Исходная рабочая среда недоступна. Запуск отменён без сброса настроек."));
  if(shared){Obj cfgPath=join(settingsSource(a),"config.toml");
   cfg=exists(cfgPath)?readText(canonical(cfgPath)):str("");if(!cfg)return str(T("The source config.toml is unavailable or larger than 2 MB.","config.toml источника недоступен или больше 2 МБ."));}
- else if(exists(join(ch,"config.toml"))){cfg=readText(join(ch,"config.toml"));if(!cfg)return str(T("The local config.toml is unavailable or too large.","Локальный config.toml недоступен или слишком велик."));}
- else cfg=str("");
- Size cap=strlen(utf8(cfg))+512;char* text=(char*)calloc(cap,1);if(!text)return str(T("Out of memory.","Недостаточно памяти."));
- auto result=deck::codexConfig(utf8(cfg),text,cap);
- if(result!=deck::ConfigResult::Ok){free(text);return str(T("config.toml contains an ambiguous sign-in setting or a multi-line string. Automatic editing cancelled. Use a simple shared config.toml; move complex configuration into the project's .codex/config.toml.","config.toml содержит неоднозначную запись настройки авторизации или многострочную строку. Автоматическая правка отменена. Используйте простой общий config.toml; перенесите сложную конфигурацию в .codex/config.toml проекта."));}
- Obj dest=join(ch,"config.toml");Obj old=readText(dest);bool ok=true;
- if(old&&!same(old,str(text)))ok=writeText(cat(dest,str(".previous")),old);
- if(ok)ok=writeText(dest,str(text));free(text);if(!ok)return str(T("Could not write config.toml safely; launch cancelled.","Не удалось безопасно записать config.toml; запуск отменён."));
+ // Desktop registers the real path of its materialized bundled marketplace.
+ char* physicalHome=realpath(utf8(ch),nullptr);
+ if(!physicalHome)return str(T("Could not resolve the Codex profile folder.","Не удалось определить путь к папке профиля Codex."));
+ Obj projected=projectedCodexConfig(cfg,physicalHome);free(physicalHome);
+ if(!projected)return str(T("AppDeck could not safely prepare config.toml. Check for an ambiguous sign-in setting, a multi-line string, or a file larger than 2 MB.","AppDeck не удалось подготовить config.toml. Проверьте настройку авторизации, наличие многострочных строк и размер файла (до 2 МБ)."));
+ bool changed=!same(old,projected);
+ if(changed||integer(get(attrs(dest),"NSFilePosixPermissions"))!=0600){
+  if((changed&&old&&!writeText(cat(dest,str(".previous")),old))||exists(dest)!=(old!=nullptr)||
+     !same(readText(dest),old)||!writeText(dest,projected))
+   return str(T("Could not write config.toml safely; launch cancelled.","Не удалось безопасно записать config.toml; запуск отменён."));
+ }
  if(shared){
   Obj s=settingsSource(a);if(!copySettingsFile(canonical(join(s,"AGENTS.md")),join(ch,"AGENTS.md")))return str(T("Could not sync AGENTS.md.","Не удалось синхронизировать AGENTS.md."));
   for(const char* name:{"skills","rules"})if(!linkSettingDirectory(join(s,name),join(ch,name),a,name))return str(T("A skills or rules folder already exists in the profile and is not linked to the shared one. Move it manually; AppDeck never deletes or replaces such folders.","Папка skills или rules уже существует в профиле и не связана с общей. Перенесите её вручную; AppDeck не удаляет и не заменяет такие папки."));
